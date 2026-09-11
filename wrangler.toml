@@ -1,0 +1,17 @@
+name = "mydrive-cloud-storage"
+main = "src/worker.js"
+compatibility_date = "2026-09-11"
+
+[assets]
+directory = "./assets"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mydrive"
+database_id = "replace-with-dashboard-d1-id"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "replace-with-dashboard-kv-id"
