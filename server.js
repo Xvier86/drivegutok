@@ -245,7 +245,13 @@ async function deleteFromProvider(file, provider) {
   if (!file.remote_file_id || !provider) return { skipped: true, reason: 'Tidak ada remote_file_id atau provider.' };
   const encryptedMatch = file.remote_file_id.match(/^enc:([^:]+):(.+)$/);
   const remoteFileId = encryptedMatch ? encryptedMatch[2] : file.remote_file_id;
-  const config = decryptConfig(provider.config_json);
+  let config;
+  try { config = decryptConfig(provider.config_json); }
+  catch {
+    // STORAGE_CONFIG_KEY beda dari saat konfigurasi disimpan (misal hilang/diganti) — bukan error sementara,
+    // memang mustahil didekripsi lagi. Jangan kunci file ini selamanya di dashboard karena hal ini.
+    return { skipped: true, unrecoverable: true, reason: `Konfigurasi provider ${provider.kind} tidak bisa dibaca (STORAGE_CONFIG_KEY berubah/hilang). File mungkin masih ada di ${provider.kind}, hapus manual dari sana jika perlu.` };
+  }
   if (provider.kind === 'telegram') return deleteFromTelegram(remoteFileId, config);
   if (provider.kind === 'gdrive') return deleteFromGoogleDrive(remoteFileId, config);
   if (provider.kind === 'mega') return deleteFromMega(remoteFileId, config);
@@ -436,12 +442,18 @@ app.delete('/api/files/:id', requireUser, async (req, res) => {
   const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
   if (!file) return res.status(404).end();
   const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider);
-  try { await deleteFromProvider(file, provider); }
-  catch (error) { return json(res, { error: `File masih ada di ${provider?.kind || 'provider'}, gagal dihapus: ${error.message}` }, 502); }
+  let warning = null;
+  try {
+    const result = await deleteFromProvider(file, provider);
+    if (result?.unrecoverable && result.reason) warning = result.reason;
+  } catch (error) {
+    return json(res, { error: `File masih ada di ${provider?.kind || 'provider'}, gagal dihapus: ${error.message}` }, 502);
+  }
   db.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').run(now(), file.id);
   db.prepare('UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?').run(file.size, file.provider);
   if (file.remote_file_id) fs.rmSync(path.join(storageDir, file.remote_file_id), { force: true });
   audit(req.user.id, 'delete', 'file', file.id);
+  if (warning) return json(res, { ok: true, warning }, 200);
   return res.status(204).end();
 });
 app.post('/api/files/:id/share', requireUser, (req, res) => {
