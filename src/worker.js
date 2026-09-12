@@ -92,13 +92,54 @@ async function api(request, env) {
     await log(env, user.id, "upload", "file", file.id);
     return json(file, 201);
   }
+  if (request.method === "PATCH" && path.startsWith("/api/files/")) {
+    const fileId = path.split("/").pop();
+    const file = await env.DB.prepare("SELECT id FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL").bind(fileId, user.id).first();
+    if (!file) return json({ error: "File tidak ditemukan." }, 404);
+    const body = await request.json();
+    if (!body.name?.trim()) return json({ error: "Nama file wajib diisi." }, 400);
+    await env.DB.prepare("UPDATE files SET name = ? WHERE id = ?").bind(body.name.trim(), fileId).run();
+    await log(env, user.id, "rename", "file", fileId);
+    return json({ ok: true });
+  }
   if (request.method === "DELETE" && path.startsWith("/api/files/")) {
     const fileId = path.split("/").pop();
     const file = await env.DB.prepare("SELECT size, provider FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL").bind(fileId, user.id).first();
     if (!file) return json({ error: "File tidak ditemukan." }, 404);
+    // Catatan: target Cloudflare Worker ini (Fase 1) belum menyimpan kredensial provider di D1,
+    // jadi penghapusan remote otomatis belum bisa dilakukan di sini seperti di server.js (VPS).
+    // File tetap harus dihapus manual dari provider terkait sampai integrasi ini dibuat.
     await env.DB.prepare("UPDATE files SET deleted_at = ? WHERE id = ? AND owner_id = ?").bind(now(), fileId, user.id).run();
     await env.DB.prepare("UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?").bind(file.size, file.provider).run();
     await log(env, user.id, "delete", "file", fileId);
+    return new Response(null, { status: 204 });
+  }
+  if (request.method === "PATCH" && path.startsWith("/api/folders/")) {
+    const folderId = path.split("/").pop();
+    const folder = await env.DB.prepare("SELECT id FROM folders WHERE id = ? AND owner_id = ? AND deleted_at IS NULL").bind(folderId, user.id).first();
+    if (!folder) return json({ error: "Folder tidak ditemukan." }, 404);
+    const body = await request.json();
+    if (!body.name?.trim() && body.parentId === undefined) return json({ error: "Nama atau folder tujuan wajib diisi." }, 400);
+    if (body.name?.trim()) await env.DB.prepare("UPDATE folders SET name = ? WHERE id = ?").bind(body.name.trim(), folderId).run();
+    if (body.parentId !== undefined) await env.DB.prepare("UPDATE folders SET parent_id = ? WHERE id = ?").bind(body.parentId || null, folderId).run();
+    await log(env, user.id, "update", "folder", folderId);
+    return json({ ok: true });
+  }
+  if (request.method === "DELETE" && path.startsWith("/api/folders/")) {
+    const folderId = path.split("/").pop();
+    const folder = await env.DB.prepare("SELECT id FROM folders WHERE id = ? AND owner_id = ? AND deleted_at IS NULL").bind(folderId, user.id).first();
+    if (!folder) return json({ error: "Folder tidak ditemukan." }, 404);
+    const deletedAt = now();
+    const tree = await env.DB.prepare("WITH RECURSIVE tree(id) AS (SELECT id FROM folders WHERE id = ? UNION ALL SELECT folders.id FROM folders JOIN tree ON folders.parent_id = tree.id) SELECT id FROM tree").bind(folderId).all();
+    const treeIds = tree.results.map((row) => row.id);
+    const placeholders = treeIds.map(() => "?").join(",");
+    const files = await env.DB.prepare(`SELECT id, size, provider FROM files WHERE owner_id = ? AND folder_id IN (${placeholders}) AND deleted_at IS NULL`).bind(user.id, ...treeIds).all();
+    for (const file of files.results) {
+      await env.DB.prepare("UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?").bind(file.size, file.provider).run();
+    }
+    await env.DB.prepare(`UPDATE folders SET deleted_at = ? WHERE owner_id = ? AND id IN (${placeholders})`).bind(deletedAt, user.id, ...treeIds).run();
+    await env.DB.prepare(`UPDATE files SET deleted_at = ? WHERE owner_id = ? AND folder_id IN (${placeholders})`).bind(deletedAt, user.id, ...treeIds).run();
+    await log(env, user.id, "delete", "folder", folderId);
     return new Response(null, { status: 204 });
   }
   if (request.method === "GET" && path === "/api/admin/overview") {
