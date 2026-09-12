@@ -7,7 +7,20 @@
 5. **server.js** (`getGoogleAccessToken`): ada jalur lama yang reuse token OAuth mentah dari config selamanya tanpa refresh. Token Google expired ~1 jam → upload Google Drive gagal berkala tanpa pesan jelas. Jalur ini dihapus, sekarang selalu generate token baru dari service account JSON (auto-refresh tiap request, sesuai desain awal).
 6. **assets/app.js** (form "Tambah storage" → Google Drive): sebelumnya minta field "Google access token" yang gak pernah bisa diisi user secara valid dan gak dipakai validasi backend (backend butuh `serviceAccountJson`). Diganti jadi textarea Service Account JSON, jadi provider Google Drive bisa langsung dikonfigurasi sekali jalan (gak perlu buat lalu edit lagi).
 7. **src/worker.js** (Cloudflare Worker target): `DELETE /api/files/:id` gak pernah decrement `providers.used_bytes`, jadi angka storage terpakai di dashboard owner cuma naik terus walau file dihapus. Sudah di-fix.
+8. **server.js** (`PATCH /api/admin/providers/:id`): request yang cuma mengirim `config` tetap menjalankan `UPDATE providers SET enabled = ...`, jadi provider yang sedang aktif mati sendiri setiap kali kredensialnya di-edit. Sekarang status aktif hanya berubah kalau field `enabled` benar-benar dikirim.
+9. **server.js** (`GET /s/:token/download`): masih memakai `res.download(path.join(storageDir, remote_file_id))`, sisa desain waktu file disimpan lokal. Semua file sekarang ada di provider remote, jadi link share selalu gagal `ENOENT` (stack trace-nya bahkan ikut terkirim ke response). Sekarang dialirkan lewat `sendRemoteFile` supaya provider dan dekripsi ikut diproses.
+10. **server.js** (`GET /cdn/:slug`): tidak mengecek `expires_at`, jadi link CDN tetap melayani file yang masa simpannya sudah habis. Sekarang ikut memfilter `expires_at`.
+11. **server.js** (`readProviderCapacity` Mega): membaca `storage.usedSpace` dan `storage.capacity` yang tidak ada di megajs 1.3.10, jadi pemakaian Mega selalu tampil 0 dan kapasitasnya kosong. Sekarang memakai `getAccountInfo()` -> `spaceUsed` / `spaceTotal`.
+12. **server.js** (`sendRemoteFile`): jalur download Mega belum ada (`throw new Error('Download Mega belum tersedia.')`), jadi preview/download/share file Mega selalu gagal. Sekarang Mega dialirkan lewat `node.download()`. `Content-Length` juga tidak lagi dikirim supaya respons memakai chunked transfer dan tidak menggantung.
+13. **server.js** (`POST /api/files`): Telegram Bot API menolak file di atas 50 MB, tetapi penolakan itu baru muncul setelah seluruh file terkirim. Sekarang ditolak lebih awal dengan status 409 dan pesan yang jelas.
+14. **server.js** (`POST /api/files/:id/share`): `new Date(expiresAt)` tanpa validasi bikin 500 kalau nilainya ngawur; sekarang jadi 400. Password share juga divalidasi minimal 4 karakter.
+15. **cleanup.js**: memakai `require` padahal `package.json` memakai `"type": "module"`, sehingga `node cleanup.js` selalu gagal `ReferenceError: require is not defined in ES module scope`. Diubah ke ESM (`import`) dan sekarang memberi peringatan kalau `STORAGE_CONFIG_KEY` kosong.
+16. **.env.example** ditambahkan: `setup.sh` menjalankan `cp .env.example .env`, tetapi file itu tidak pernah ada di repo — deployment lewat `setup.sh` gagal di langkah pertama.
+17. **.gitignore** ditambahkan: sebelumnya tidak ada, sehingga `data/` (SQLite berisi kredensial provider terenkripsi), `storage/`, dan `.env` berisiko ikut ter-commit.
+18. **assets/app.js**: fitur share (PRD bagian 10) sudah lengkap di backend tetapi tidak punya UI sama sekali. Ditambahkan tombol bagikan per file, modal link share (password & masa berlaku opsional), dan tautan CDN untuk gambar/video.
+
+
 
 ## Belum di-touch (bukan bug, tapi perlu keputusan produk — lihat PRD Open Questions)
-- Limit ukuran file per provider (terutama Telegram bot API ~50MB) belum divalidasi sebelum upload — sekarang baru ketahuan gagal setelah request ke Telegram API.
+- Limit ukuran per provider: Telegram sudah dibatasi 50 MB sejak nomor 13. Provider lain masih memakai batas global `MAX_FILE_SIZE` — belum ada batas spesifik per provider.
 - `src/worker.js` (Cloudflare) masih versi Fase 1 minimal: belum ada share link, folder delete, CDN slug, retention, enkripsi — semua itu cuma ada di `server.js` (VPS/Node target). Jangan campur dua target ini kecuali sudah migrasi schema.

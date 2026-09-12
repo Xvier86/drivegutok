@@ -1,0 +1,19 @@
+# Dependency
+node_modules/
+
+# Runtime data: SQLite berisi kredensial provider terenkripsi + file temporary upload
+data/
+storage/
+
+# Environment & secret
+.env
+.env.*
+!.env.example
+*.log
+*.pem
+*.key
+*.crt
+service-account*.json
+
+# Arsip backup lokal
+gutok-drive-backup-*.tar.gz

@@ -5,11 +5,18 @@
 // yang terdaftar aktif di database, baru kemudian mengosongkan tabel files/folders dan mereset
 // used_bytes provider ke 0. Sebelumnya script ini hanya soft-delete di database sehingga file
 // fisik tetap tersisa di provider — itu sudah diperbaiki di sini.
-const Database = require('better-sqlite3');
-const path = require('path');
-const crypto = require('crypto');
+import Database from 'better-sqlite3';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
-const db = new Database(path.join(__dirname, 'data', 'mydrive.sqlite'));
+// Project ini memakai ESM ("type": "module" di package.json), jadi file ini memakai
+// import, bukan require. Kalau dijalankan sebagai CommonJS akan error:
+// "require is not defined in ES module scope".
+const root = path.dirname(fileURLToPath(import.meta.url));
+const db = new Database(path.join(root, 'data', 'mydrive.sqlite'));
+
+if (!process.env.STORAGE_CONFIG_KEY) console.warn('PERINGATAN: STORAGE_CONFIG_KEY tidak diisi, memakai key default. Konfigurasi provider yang tersimpan kemungkinan gagal didekripsi.');
 
 const configKey = crypto.createHash('sha256').update(process.env.STORAGE_CONFIG_KEY || 'change-this-storage-config-key').digest();
 function decryptConfig(value) {
@@ -51,7 +58,7 @@ async function deleteFromGoogleDrive(remoteFileId, config) {
 }
 async function deleteFromMega(remoteFileId, config) {
   const nodeId = remoteFileId.replace('mega:', '');
-  const { Storage } = require('megajs');
+  const { Storage } = await import('megajs');
   const storage = new Storage({ email: config.email, password: config.password });
   await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
   try {

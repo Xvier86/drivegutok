@@ -133,7 +133,10 @@ async function readProviderCapacity(provider) {
     const storage = new Storage({ email: config.email, password: config.password });
     try {
       await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
-      return { usedBytes: Number(storage.usedSpace || 0), capacityBytes: Number(storage.capacity || 0), capacitySource: 'mega' };
+      // megajs tidak menyediakan properti storage.usedSpace / storage.capacity, jadi angka
+      // kuota diambil dari getAccountInfo() -> { spaceUsed, spaceTotal }.
+      const account = await storage.getAccountInfo();
+      return { usedBytes: Number(account.spaceUsed || 0), capacityBytes: Number(account.spaceTotal || 0), capacitySource: 'mega' };
     } finally { storage.close?.(); }
   }
   return { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'manual' };
@@ -257,31 +260,52 @@ async function deleteFromProvider(file, provider) {
   if (provider.kind === 'mega') return deleteFromMega(remoteFileId, config);
   return { skipped: true, reason: `Provider ${provider.kind} tidak didukung untuk penghapusan remote.` };
 }
-async function sendRemoteFile(res, file, provider) {
+async function sendRemoteFile(res, file, provider, disposition = 'inline') {
   const config = decryptConfig(provider.config_json);
   const encryptedMatch = file.remote_file_id.match(/^enc:([^:]+):(.+)$/);
   const remoteFileId = encryptedMatch ? encryptedMatch[2] : file.remote_file_id;
-  let response;
+  let source;
+  let closeProvider = () => {};
   if (provider.kind === 'telegram') {
     const telegramParts = remoteFileId.split(':');
     const fileId = telegramParts.length >= 4 ? telegramParts[3] : telegramParts[1]; // format baru: telegram:chatId:messageId:fileId, lama: telegram:fileId
     const info = await fetch(`https://api.telegram.org/bot${config.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`).then((result) => result.json());
     if (!info.ok) throw new Error(info.description || 'Telegram file tidak ditemukan.');
-    response = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${info.result.file_path}`);
+    const response = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${info.result.file_path}`);
+    if (!response.ok || !response.body) throw new Error(`Provider telegram mengembalikan HTTP ${response.status}.`);
+    source = Readable.fromWeb(response.body);
   } else if (provider.kind === 'gdrive') {
     const fileId = remoteFileId.replace('gdrive:', '');
-    response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${await getGoogleAccessToken(config)}` } });
-  } else { throw new Error('Download Mega belum tersedia.'); }
-  if (!response.ok || !response.body) throw new Error(`Provider ${provider.kind} mengembalikan HTTP ${response.status}`);
-  res.setHeader('Content-Type', file.mime_type);
-  res.setHeader('Content-Length', file.size);
-  res.setHeader('Content-Disposition', `inline; filename="${safeName(file.name)}"`);
-  const remoteStream = Readable.fromWeb(response.body);
-  if (encryptedMatch) {
-    const decipher = crypto.createDecipheriv('aes-256-ctr', configKey, Buffer.from(encryptedMatch[1], 'base64url'));
-    return remoteStream.pipe(decipher).pipe(res);
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${await getGoogleAccessToken(config)}` } });
+    if (!response.ok || !response.body) throw new Error(`Provider gdrive mengembalikan HTTP ${response.status}.`);
+    source = Readable.fromWeb(response.body);
+  } else if (provider.kind === 'mega') {
+    // Sebelumnya jalur ini belum ada sehingga download/preview file Mega selalu gagal.
+    const { Storage } = await import('megajs');
+    const storage = new Storage({ email: config.email, password: config.password });
+    await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
+    const nodeId = remoteFileId.replace('mega:', '');
+    const node = storage.files?.[nodeId] || Object.values(storage.files || {}).find((entry) => entry.nodeId === nodeId);
+    closeProvider = () => storage.close?.();
+    if (!node) { closeProvider(); throw new Error('File tidak ditemukan di Mega.'); }
+    source = node.download();
+  } else {
+    throw new Error(`Download dari provider ${provider.kind} belum didukung.`);
   }
-  return remoteStream.pipe(res);
+  // Content-Length tidak dikirim supaya respons memakai chunked transfer. Ini menghindari
+  // respons menggantung kalau ukuran asli di provider tidak sama dengan metadata (mis. file terenkripsi).
+  res.setHeader('Content-Type', file.mime_type);
+  res.setHeader('Content-Disposition', `${disposition}; filename="${safeName(file.name)}"`);
+  const output = encryptedMatch ? source.pipe(crypto.createDecipheriv('aes-256-ctr', configKey, Buffer.from(encryptedMatch[1], 'base64url'))) : source;
+  try {
+    await pipeline(output, res);
+  } catch (error) {
+    // Client berhenti di tengah (menutup tab saat streaming) bukan error server.
+    if (res.headersSent) return;
+    throw error;
+  } finally {
+    closeProvider();
+  }
 }
 async function verifyGoogleProvider(config) {
   config = normalizeProviderConfig('gdrive', config);
@@ -402,6 +426,10 @@ app.post('/api/files', requireUser, upload.single('file'), async (req, res) => {
   if (!provider) { if (file) fs.rmSync(file.path, { force: true }); return json(res, { error: 'Belum ada provider remote yang aktif dan terkonfigurasi.' }, 409); }
   if (!providerStatus(provider).configured) { if (file) fs.rmSync(file.path, { force: true }); return json(res, { error: 'Provider aktif belum memiliki konfigurasi lengkap.' }, 409); }
   if (!file) return json(res, { error: 'File wajib dipilih.' }, 400);
+  // Telegram Bot API menolak file di atas 50 MB, dan penolakan itu baru muncul setelah seluruh
+  // file terkirim. Validasi lebih awal supaya bandwidth tidak terbuang.
+  const telegramLimitBytes = 50 * 1024 * 1024;
+  if (provider.kind === 'telegram' && file.size > telegramLimitBytes) { fs.rmSync(file.path, { force: true }); return json(res, { error: `Telegram hanya menerima file sampai ${Math.floor(telegramLimitBytes / 1024 / 1024)} MB. Gunakan provider lain atau perkecil file.` }, 409); }
   let uploadFile = file;
   if (encrypted) uploadFile = await encryptUpload(file);
   const size = uploadFile.size;
@@ -460,8 +488,12 @@ app.post('/api/files/:id/share', requireUser, (req, res) => {
   const file = db.prepare('SELECT id, name, mime_type FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
   if (!file) return json(res, { error: 'File tidak ditemukan.' }, 404);
   const token = crypto.randomBytes(24).toString('hex');
-  const expiresAt = req.body.expiresAt ? new Date(req.body.expiresAt).toISOString() : null;
-  db.prepare('INSERT INTO shares (token, file_id, password_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').run(token, file.id, req.body.password ? hash(req.body.password) : null, expiresAt, now());
+  const expiryDate = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
+  if (expiryDate && Number.isNaN(expiryDate.getTime())) return json(res, { error: 'Tanggal kedaluwarsa share tidak valid.' }, 400);
+  const expiresAt = expiryDate ? expiryDate.toISOString() : null;
+  const sharePassword = String(req.body.password || '');
+  if (sharePassword && sharePassword.length < 4) return json(res, { error: 'Password share minimal 4 karakter.' }, 400);
+  db.prepare('INSERT INTO shares (token, file_id, password_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').run(token, file.id, sharePassword ? hash(sharePassword) : null, expiresAt, now());
   audit(req.user.id, 'share', 'file', file.id);
   return json(res, { token, url: `${req.protocol}://${req.get('host')}/s/${token}`, expiresAt });
 });
@@ -471,12 +503,18 @@ app.get('/api/shares/:token', (req, res) => {
   if (share.password_hash && share.password_hash !== hash(req.query.password || '')) return json(res, { error: 'Password share salah atau belum diisi.' }, 401);
   return json(res, { name: share.name, mimeType: share.mime_type, downloadUrl: `/s/${share.token}/download` });
 });
-app.get('/s/:token/download', (req, res) => {
-  const share = db.prepare('SELECT shares.*, files.name, files.remote_file_id FROM shares JOIN files ON files.id = shares.file_id WHERE shares.token = ? AND files.deleted_at IS NULL').get(req.params.token);
+app.get('/s/:token/download', async (req, res) => {
+  const share = db.prepare('SELECT shares.*, files.name, files.mime_type, files.size, files.provider, files.remote_file_id FROM shares JOIN files ON files.id = shares.file_id WHERE shares.token = ? AND files.deleted_at IS NULL').get(req.params.token);
   if (!share || (share.expires_at && share.expires_at <= now()) || (share.password_hash && share.password_hash !== hash(req.query.password || ''))) return res.status(404).end();
-  return res.download(path.join(storageDir, share.remote_file_id), share.name);
+  const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(share.provider);
+  if (!share.remote_file_id || !provider) return res.status(404).end();
+  // File disimpan di provider remote (Telegram/Mega/Google Drive), bukan di folder storage lokal.
+  // Route ini sebelumnya memakai res.download(path.join(storageDir, remote_file_id)) sehingga
+  // selalu gagal ENOENT. Sekarang dialirkan lewat sendRemoteFile agar provider + dekripsi ikut diproses.
+  try { return await sendRemoteFile(res, share, provider, 'attachment'); }
+  catch { if (res.headersSent) return res.end(); return res.status(502).end(); }
 });
-app.get('/cdn/:slug', async (req, res) => { const file = db.prepare('SELECT * FROM files WHERE cdn_slug = ? AND cdn_enabled = 1 AND deleted_at IS NULL').get(req.params.slug); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return res.status(404).end(); res.setHeader('Cache-Control', 'public, max-age=86400, immutable'); try { return await sendRemoteFile(res, file, provider); } catch { return res.status(502).end(); } });
+app.get('/cdn/:slug', async (req, res) => { const file = db.prepare("SELECT * FROM files WHERE cdn_slug = ? AND cdn_enabled = 1 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.params.slug, now()); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return res.status(404).end(); res.setHeader('Cache-Control', 'public, max-age=86400, immutable'); try { return await sendRemoteFile(res, file, provider); } catch { if (res.headersSent) return res.end(); return res.status(502).end(); } });
 
 app.get('/api/admin/overview', requireUser, ownerOnly, async (_req, res) => {
   const providers = await Promise.all(db.prepare("SELECT * FROM providers WHERE kind != 'local' ORDER BY name").all().map(providerStatusWithCapacity));
@@ -507,8 +545,14 @@ app.patch('/api/admin/providers/:id', requireUser, ownerOnly, async (req, res) =
     try { await verifyGoogleProvider(decryptConfig(provider.config_json)); }
     catch (error) { return json(res, { error: `Google Drive belum bisa diaktifkan: ${error.message}` }, 409); }
   }
-  db.prepare('UPDATE providers SET enabled = ? WHERE id = ?').run(req.body.enabled ? 1 : 0, provider.id);
-  audit(req.user.id, req.body.enabled ? 'enable' : 'disable', 'provider', provider.id);
+  // Hanya ubah status aktif kalau field enabled benar-benar dikirim. Sebelumnya PATCH yang
+  // cuma memperbarui config ikut mematikan provider yang sedang aktif.
+  if (req.body.enabled === undefined) {
+    audit(req.user.id, 'update_config', 'provider', provider.id);
+  } else {
+    db.prepare('UPDATE providers SET enabled = ? WHERE id = ?').run(req.body.enabled ? 1 : 0, provider.id);
+    audit(req.user.id, req.body.enabled ? 'enable' : 'disable', 'provider', provider.id);
+  }
   return json(res, { ok: true });
 });
 
