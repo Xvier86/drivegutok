@@ -43,7 +43,7 @@ chmod 700 data storage
 Enkripsi source code tidak dapat membuat Node tetap menjalankan aplikasi tanpa memiliki plaintext saat runtime. Perlindungan yang benar adalah repository private, user Linux khusus aplikasi, permission filesystem, firewall, HTTPS, dan tidak membuka port source ke publik. Frontend `assets/app.js` tetap dapat dilihat pengguna karena browser harus menerimanya.
 
 Jika menggunakan Git:
-sudo ln -s /etc/nginx/sites-available/gutokdrive.world /etc/nginx/sites-enabled/
+
 ```bash
 git clone URL_REPOSITORY /var/www/gutok-drive
 cd /var/www/gutok-drive
@@ -75,6 +75,7 @@ openssl rand -base64 48
 ```
 
 `STORAGE_CONFIG_KEY` wajib stabil. Jika berubah, credential provider yang tersimpan terenkripsi tidak bisa didekripsi lagi.
+Semua variabel di atas sudah tersedia di `.env.example`. `setup.sh` menyalinnya menjadi `.env` dan mengisi `STORAGE_CONFIG_KEY` otomatis dengan hasil `openssl rand -base64 48`; `ecosystem.config.cjs` ikut disuntik nilai yang sama supaya PM2 memakai secret yang identik.
 
 Jangan menaruh token Telegram, password Mega, private key Google, atau API key di Git. Credential provider dimasukkan melalui panel Owner dan disimpan terenkripsi di SQLite.
 
