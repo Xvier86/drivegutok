@@ -354,7 +354,13 @@ error: Your local changes to the following files would be overwritten by merge:
 
 Rilis lama ikut melacak file runtime SQLite. Selama masih dilacak, isinya berubah setiap aplikasi berjalan, jadi `git merge --ff-only` selalu ditolak dan kode di VPS tetap versi lama (efek lanjutannya: fitur baru tidak muncul, lihat bagian sebelumnya). Rilis terbaru sudah berhenti melacaknya dan `.gitignore` menutup folder `data/`, tetapi perubahannya berupa **penghapusan file** — kalau fetch/merge dipaksa dengan `git reset --hard` atau `git clean`, database produksi bisa ikut hilang. Karena itu `update-code.sh` sekarang menangani khusus file ini: isinya disalin ke folder sementara, file di working tree dikembalikan ke versi repo (hanya supaya merge bisa jalan), merge dijalankan, lalu isi aslinya dipulihkan sebelum script selesai — juga saat deploy gagal. Aplikasi wajib berhenti selama langkah itu, dan `deploy.sh`/`redeploy.sh` sudah mematikan PM2 lebih dulu.
 
-Yang perlu kamu lakukan hanya memakai script terbaru:
+Jalan tercepat — satu perintah yang mengerjakan semuanya (tarik kode, deploy, lalu memverifikasi commit, database, secret, `/api/setup`, dan PM2):
+
+```bash
+cd ~/drivegutok && git pull origin main && bash ~/drivegutok/perbaiki-vps.sh
+```
+
+`perbaiki-vps.sh` mencetak `[OK]`/`[GAGAL]` untuk setiap pemeriksaan dan keluar dengan jumlah kegagalan (0 = sukses), sehingga hasilnya bisa langsung ditempel untuk ditelusuri kalau ada yang tidak lolos. Skrip ini juga mengulang sendiri prosesnya kalau ternyata versinya baru saja berubah setelah `git pull`. Kalau lebih suka langkah manual, urutannya sama dengan deploy biasa:
 
 ```bash
 cd ~/drivegutok && git pull origin main   # ambil update-code.sh terbaru
