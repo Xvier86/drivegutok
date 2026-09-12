@@ -285,13 +285,32 @@ Hentikan proses lama melalui PM2, atau ubah `PORT` di `ecosystem.config.cjs` dan
 
 Aplikasi hanya punya satu target deployment: VPS (`server.js` + SQLite + PM2). Target Cloudflare Workers/D1/KV sudah dihapus, jadi tidak ada `wrangler` maupun migrasi terpisah — skema database dibuat dan di-update otomatis oleh `server.js` setiap aplikasi start.
 
-`deploy.sh` mengambil versi terbaru dari Git sekaligus membuat backup `data/` lebih dulu (folder itu berisi kredensial provider terenkripsi):
+`deploy.sh` mengambil versi terbaru dari Git sekaligus membuat backup `data/`, `.env`, dan `ecosystem.config.cjs` lebih dulu (folder `data/` dan `.env` berisi kredensial provider terenkripsi serta `STORAGE_CONFIG_KEY`):
 
 ```bash
 cd /var/www/gutok-drive
 bash deploy.sh
 ```
 
-`redeploy.sh` adalah versi ringkas tanpa backup untuk VPS yang projectnya ada di `~/drivegutok`. Keduanya memakai `pm2 restart ecosystem.config.cjs --update-env` supaya `STORAGE_CONFIG_KEY` dari `ecosystem.config.cjs` tetap terpakai dan config provider lama tidak ikut rusak.
+`deploy.sh` memanggil `update-code.sh` untuk urusan Git, lalu `npm ci --omit=dev`, `pm2 restart ecosystem.config.cjs --update-env`, `pm2 save`, dan terakhir menunggu `http://127.0.0.1:3000/api/setup` merespons. Script keluar dengan status gagal kalau aplikasi tidak hidup, jadi log PM2 yang ikut ditampilkan bisa langsung diperiksa.
+
+`update-code.sh` perlu ada karena `setup.sh` menyuntik `STORAGE_CONFIG_KEY` asli ke `ecosystem.config.cjs`, padahal file itu dilacak Git. Tanpa script itu `git pull` ditolak dengan `Your local changes to the following files would be overwritten by merge`. Sekarang nilai secret diamankan lebih dulu (dari `.env`, cadangannya dari file itu sendiri), file dikembalikan ke versi repo, kode ditarik dengan `git merge --ff-only`, lalu secret disuntik ulang. `redeploy.sh` adalah versi ringkas tanpa backup untuk VPS yang projectnya ada di `~/drivegutok` dan memakai `update-code.sh` yang sama.
+
+Sekali saja, kalau VPS kamu masih memakai `deploy.sh` versi lama (yang belum memanggil `update-code.sh`), jalankan langkah berikut untuk sampai ke versi terbaru:
+
+```bash
+cd /var/www/gutok-drive
+SECRET=$(grep '^STORAGE_CONFIG_KEY=' .env | cut -d '=' -f2-)
+cp ecosystem.config.cjs ~/ecosystem.config.cjs.bak
+git checkout -- ecosystem.config.cjs
+git pull origin main
+sed -i "s#STORAGE_CONFIG_KEY: '.*'#STORAGE_CONFIG_KEY: '${SECRET}'#" ecosystem.config.cjs
+pm2 restart ecosystem.config.cjs --update-env
+pm2 save
+```
+
+Setelah itu `bash deploy.sh` sudah aman dipakai berulang kali tanpa langkah manual.
+
+Mengubah `TRASH_RETENTION_DAYS` (masa simpan item di Sampah) dilakukan di `ecosystem.config.cjs` karena PM2 tidak membaca `.env`, lalu jalankan `pm2 restart ecosystem.config.cjs --update-env`. Skema database tidak perlu migrasi manual: `server.js` membuat tabel dan menambah kolom yang kurang saat aplikasi start.
 
 Sesuaikan `APP_DIR` di `deploy.sh` maupun `setup.sh` kalau lokasi project bukan `/var/www/gutok-drive`.
