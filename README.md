@@ -2,6 +2,8 @@
 
 Cloud storage multi-provider berbasis Node.js, Express, dan SQLite. File dikirim ke provider remote yang dipilih Owner: Google Drive, Telegram Channel, atau Mega. VPS hanya menjalankan aplikasi, database metadata, dan file temporary saat proses upload.
 
+Deployment hanya untuk VPS (PM2 + Nginx). Tidak ada target Cloudflare Workers/D1/KV — cukup Node.js dan satu VPS.
+
 ## 1. Prasyarat VPS
 
 - Ubuntu/Debian Linux.
@@ -270,6 +272,17 @@ pm2 status
 
 Hentikan proses lama melalui PM2, atau ubah `PORT` di `ecosystem.config.cjs` dan reverse proxy secara bersamaan.
 
-## 11. Cloudflare Worker
+## 11. Update dan Deploy Ulang
 
-`wrangler.toml` dan `src/worker.js` adalah target deployment terpisah untuk Cloudflare Workers + D1 + KV. Deployment VPS menggunakan `server.js`, SQLite, dan PM2. Jangan mencampur database D1 dengan SQLite VPS tanpa migrasi metadata khusus.
+Aplikasi hanya punya satu target deployment: VPS (`server.js` + SQLite + PM2). Target Cloudflare Workers/D1/KV sudah dihapus, jadi tidak ada `wrangler` maupun migrasi terpisah — skema database dibuat dan di-update otomatis oleh `server.js` setiap aplikasi start.
+
+`deploy.sh` mengambil versi terbaru dari Git sekaligus membuat backup `data/` lebih dulu (folder itu berisi kredensial provider terenkripsi):
+
+```bash
+cd /var/www/gutok-drive
+bash deploy.sh
+```
+
+`redeploy.sh` adalah versi ringkas tanpa backup untuk VPS yang projectnya ada di `~/drivegutok`. Keduanya memakai `pm2 restart ecosystem.config.cjs --update-env` supaya `STORAGE_CONFIG_KEY` dari `ecosystem.config.cjs` tetap terpakai dan config provider lama tidak ikut rusak.
+
+Sesuaikan `APP_DIR` di `deploy.sh` maupun `setup.sh` kalau lokasi project bukan `/var/www/gutok-drive`.

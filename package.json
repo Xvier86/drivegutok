@@ -1,11 +1,11 @@
 {
-  "name": "mydrive-cloud-storage",
+  "name": "gutok-drive",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check cleanup.js && node --check src/worker.js && node --check assets/app.js"
+    "check": "node --check server.js && node --check cleanup.js && node --check assets/app.js"
   },
   "engines": {
     "node": ">=20"

@@ -324,7 +324,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  if (/\.(env|sqlite|sqlite3|db|pem|key|log)$/i.test(req.path) || /(^|\/)(server\.js|package-lock\.json|wrangler\.toml|ecosystem\.config\.cjs)(\/|$)/i.test(req.path)) return res.status(404).end();
+  if (/\.(env|sqlite|sqlite3|db|pem|key|log)$/i.test(req.path) || /(^|\/)(server\.js|package-lock\.json|ecosystem\.config\.cjs)(\/|$)/i.test(req.path)) return res.status(404).end();
   return next();
 });
 app.use(express.static(path.join(root, 'assets')));
