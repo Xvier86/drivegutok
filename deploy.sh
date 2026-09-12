@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/var/www/gutok-drive}"   # samain dengan setup.sh
+# Deploy normal di VPS: backup -> hentikan PM2 -> tarik kode -> npm ci -> start -> health check.
+APP_DIR="${APP_DIR:-/var/www/gutok-drive}"
 BRANCH="${BRANCH:-main}"
 PORT="${PORT:-3000}"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP=""
 APP_DIHENTIKAN=0
 
-# update-code.sh dicari di APP_DIR; kalau belum ada (deployment yang belum pernah menarik commit
-# ini), dipakai yang ada di folder script. Jadi `bash ~/drivegutok/deploy.sh` tetap bisa
-# menyelesaikan deploy pertama ke /var/www/gutok-drive tanpa langkah manual.
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# update-code.sh dicari di APP_DIR lebih dulu (versi yang sudah terpasang), lalu di folder script ini
+# supaya `bash ~/drivegutok/deploy.sh` tetap bisa menyelesaikan deploy pertama ke /var/www/gutok-drive.
 UPDATE_CODE=""
 for kandidat in "$APP_DIR/update-code.sh" "$SELF_DIR/update-code.sh"; do
-  if [ -f "$kandidat" ]; then UPDATE_CODE="$kandidat"; break; fi
+  if [ -f "$kandidat" ]; then
+    UPDATE_CODE="$kandidat"
+    break
+  fi
 done
 
 if [ -z "$UPDATE_CODE" ]; then
@@ -50,16 +53,16 @@ cd "$APP_DIR"
 pm2 stop gutok-drive || true
 APP_DIHENTIKAN=1
 
-# Backup dulu: data/ berisi kredensial provider terenkripsi, .env berisi STORAGE_CONFIG_KEY.
+# data/ berisi kredensial provider terenkripsi, .env berisi STORAGE_CONFIG_KEY.
 mkdir -p data storage data/tmp   # tar gagal (exit 2) kalau data/ belum ada
 BACKUP="gutok-drive-backup-$(date +%F-%H%M).tar.gz"
 BACKUP_ITEMS=(data/)
-if [ -f .env ]; then BACKUP_ITEMS+=(".env"); fi
-if [ -f ecosystem.config.cjs ]; then BACKUP_ITEMS+=("ecosystem.config.cjs"); fi
+if [ -f .env ]; then BACKUP_ITEMS+=(.env); fi
+if [ -f ecosystem.config.cjs ]; then BACKUP_ITEMS+=(ecosystem.config.cjs); fi
 tar -czf "$BACKUP" "${BACKUP_ITEMS[@]}"
 echo ">> Backup dibuat: $APP_DIR/$BACKUP"
 
-# Tarik kode terbaru. Secret STORAGE_CONFIG_KEY di ecosystem.config.cjs otomatis diamankan.
+# Tarik kode terbaru. Secret di ecosystem.config.cjs diamankan update-code.sh lalu disuntik ulang.
 APP_DIR="$APP_DIR" BRANCH="$BRANCH" bash "$UPDATE_CODE"
 
 npm ci --omit=dev

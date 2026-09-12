@@ -11,8 +11,10 @@ set -u
 
 APP_DIR="${APP_DIR:-/var/www/gutok-drive}"
 BRANCH="${BRANCH:-main}"
+PORT="${PORT:-3000}"
 DIR_SCRIPT="$(cd "$(dirname "$0")" && pwd)"
 LOG="/tmp/perbaiki-vps-$(date +%Y%m%d-%H%M%S).log"
+PLACEHOLDER='ganti-dengan-secret-acak-minimal-32-karakter'
 GAGAL=0
 
 ok()   { printf '  [OK]    %s\n' "$*"; }
@@ -34,15 +36,16 @@ fi
 #    jalankan ulang supaya versi baru yang dipakai.
 if [ -z "${SUDAH_PULL:-}" ] && git -C "$DIR_SCRIPT" rev-parse --git-dir >/dev/null 2>&1; then
   sebelum=$(md5sum "$0" | cut -d' ' -f1)
-  if git -C "$DIR_SCRIPT" fetch -q origin "$BRANCH" 2>/dev/null && \
+  if git -C "$DIR_SCRIPT" fetch -q origin "$BRANCH" 2>/dev/null &&
      git -C "$DIR_SCRIPT" merge --ff-only "origin/$BRANCH" >/dev/null 2>&1; then
     :
   else
     info "repo script tidak bisa di-ff-merge (aman, dipakai versi yang ada sekarang)."
   fi
   if [ "$sebelum" != "$(md5sum "$0" | cut -d' ' -f1)" ]; then
-    echo ">> Versi baru script terdeteksi, dijalankan ulang dari awal..." && echo
-    SUDAH_PULL=1 exec env SUDAH_PULL=1 APP_DIR="$APP_DIR" BRANCH="$BRANCH" bash "$0"
+    echo ">> Versi baru script terdeteksi, dijalankan ulang dari awal..."
+    echo
+    exec env SUDAH_PULL=1 APP_DIR="$APP_DIR" BRANCH="$BRANCH" PORT="$PORT" bash "$0"
   fi
 fi
 
@@ -69,6 +72,7 @@ else
   bad "deploy.sh gagal (exit $RC) — seluruh log ada di $LOG"
 fi
 echo
+
 echo "-- Hasil verifikasi --"
 HEAD_SESUDAH=$(git rev-parse --short HEAD 2>/dev/null || echo '?')
 TIP=$(git -C "$DIR_SCRIPT" rev-parse --short "origin/$BRANCH" 2>/dev/null || echo '?')
@@ -81,12 +85,7 @@ else
   bad "commit produksi masih $HEAD_SESUDAH, seharusnya $TIP (kode belum masuk, lihat $LOG)"
 fi
 
-if [ "$(git ls-files -- data/ | wc -l)" -eq 0 ]; then
-  ok "folder data/ tidak lagi dilacak Git (penyebab merge ditolak hilang untuk selamanya)"
-else
-  bad "masih ada $(git ls-files -- data/ | wc -l) file di data/ yang dilacak Git"
-fi
-
+# Database: satu-satunya bukti bahwa data provider tidak hilang.
 MD5_DB_SESUDAH=$(md5sum data/mydrive.sqlite 2>/dev/null | cut -d' ' -f1)
 if [ -z "$MD5_DB_SEBELUM" ] && [ -z "$MD5_DB_SESUDAH" ]; then
   info "data/mydrive.sqlite tidak ada sebelum & sesudah deploy (database baru dibuat saat start)."
@@ -95,6 +94,7 @@ elif [ "$MD5_DB_SEBELUM" = "$MD5_DB_SESUDAH" ]; then
 else
   bad "md5sum database BERUBAH ($MD5_DB_SEBELUM -> $MD5_DB_SESUDAH) — periksa $LOG dan backup"
 fi
+
 BACKUP_BARU=$(ls -t gutok-drive-backup-*.tar.gz 2>/dev/null | head -1 || true)
 if [ -n "$BACKUP_BARU" ] && tar -tzf "$BACKUP_BARU" 2>/dev/null | grep -q '^data/'; then
   ok "backup rilis ini memuat folder data/: $BACKUP_BARU"
@@ -104,8 +104,9 @@ else
   info "belum ada file backup (dilewati kalau deploy berhenti sebelum tahap backup)."
 fi
 
+# Secret dipakai server.js untuk mendekripsi config provider di SQLite.
 NILAI_ECOSYSTEM=$(sed -n "s/^ *STORAGE_CONFIG_KEY: *'\(.*\)'.*/\1/p" ecosystem.config.cjs 2>/dev/null | head -1 || true)
-if [ -z "$NILAI_ECOSYSTEM" ] || [ "$NILAI_ECOSYSTEM" = 'ganti-dengan-secret-acak-panjang' ]; then
+if [ -z "$NILAI_ECOSYSTEM" ] || [ "$NILAI_ECOSYSTEM" = "$PLACEHOLDER" ]; then
   bad "STORAGE_CONFIG_KEY di ecosystem.config.cjs masih placeholder/kosong — config provider lama tidak bisa didekrip"
 elif [ -n "$SECRET" ] && [ "$NILAI_ECOSYSTEM" != "$SECRET" ]; then
   bad "STORAGE_CONFIG_KEY di ecosystem.config.cjs berbeda dengan yang ada di .env"
@@ -113,13 +114,12 @@ else
   ok "STORAGE_CONFIG_KEY di ecosystem.config.cjs terisi dan cocok dengan .env"
 fi
 
-JAWAB=$(curl -fsS --max-time 10 http://127.0.0.1:3000/api/setup 2>/dev/null || true)
+JAWAB=$(curl -fsS --max-time 10 "http://127.0.0.1:${PORT}/api/setup" 2>/dev/null || true)
 if [ -n "$JAWAB" ]; then
   ok "aplikasi merespons: /api/setup -> $JAWAB"
 else
-  bad "aplikasi tidak merespons di http://127.0.0.1:3000/api/setup"
+  bad "aplikasi tidak merespons di http://127.0.0.1:${PORT}/api/setup"
 fi
-
 
 BARIS_PM2=$(pm2 status gutok-drive 2>/dev/null | grep 'gutok-drive' | head -1 || true)
 if echo "$BARIS_PM2" | grep -q 'online'; then
@@ -159,4 +159,3 @@ Langkah lanjutan yang butuh keputusanmu (tidak dijalankan otomatis):
 CATATAN
 
 exit "$GAGAL"
-

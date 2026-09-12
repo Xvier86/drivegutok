@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Versi ringkas tanpa backup, untuk VPS yang projectnya ada di ~/drivegutok.
+# Versi ringkas deploy.sh tanpa backup: untuk VPS yang projectnya di ~/drivegutok.
 APP_DIR="${APP_DIR:-$HOME/drivegutok}"
 BRANCH="${BRANCH:-main}"
 PORT="${PORT:-3000}"
@@ -14,8 +14,7 @@ if [ ! -f update-code.sh ]; then
   exit 1
 fi
 
-# Sama seperti deploy.sh: kalau ada langkah yang gagal setelah aplikasi dihentikan,
-# jangan tinggalkan situs mati.
+# Sama seperti deploy.sh: kalau langkah setelah aplikasi dihentikan gagal, situs jangan ikut mati.
 bersihkan() {
   status=$?
   if [ "$status" -ne 0 ] && [ "$APP_DIHENTIKAN" -eq 1 ]; then
@@ -41,7 +40,10 @@ pm2 save
 
 HEALTHY=0
 for _ in $(seq 1 20); do
-  if curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/api/setup"; then HEALTHY=1; break; fi
+  if curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/api/setup"; then
+    HEALTHY=1
+    break
+  fi
   sleep 1
 done
 
