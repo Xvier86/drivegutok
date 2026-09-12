@@ -131,8 +131,10 @@ async function readProviderCapacity(provider) {
   if (provider.kind === 'mega') {
     const { Storage } = await import('megajs');
     const storage = new Storage({ email: config.email, password: config.password });
-    await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
-    return { usedBytes: Number(storage.usedSpace || 0), capacityBytes: Number(storage.capacity || 0), capacitySource: 'mega' };
+    try {
+      await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
+      return { usedBytes: Number(storage.usedSpace || 0), capacityBytes: Number(storage.capacity || 0), capacitySource: 'mega' };
+    } finally { storage.close?.(); }
   }
   return { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'manual' };
 }
@@ -170,7 +172,8 @@ async function uploadToTelegram(file, config, name, mimeType) {
   const response = await fetch(`https://api.telegram.org/bot${config.botToken}/sendDocument`, { method: 'POST', body: form });
   const result = await response.json();
   if (!response.ok || !result.ok) throw new Error(result.description || `Telegram API ${response.status}. Pastikan bot sudah menjadi admin channel atau user sudah memulai chat.`);
-  return { remoteFileId: `telegram:${result.result.document.file_id}`, size: file.size };
+  // message_id disimpan supaya file benar-benar bisa dihapus dari channel nanti (bukan cuma disembunyikan dari dashboard)
+  return { remoteFileId: `telegram:${chatId}:${result.result.message_id}:${result.result.document.file_id}`, size: file.size };
 }
 async function uploadToGoogleDrive(file, config, name, mimeType) {
   config = normalizeProviderConfig('gdrive', config);
@@ -191,11 +194,13 @@ async function uploadToGoogleDrive(file, config, name, mimeType) {
 async function uploadToMega(file, config, name) {
   const { Storage } = await import('megajs');
   const storage = new Storage({ email: config.email, password: config.password });
-  await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
-  const upload = storage.upload({ name, size: file.size });
-  fs.createReadStream(file.path).pipe(upload);
-  const remote = await new Promise((resolve, reject) => { upload.on('complete', resolve); upload.on('error', reject); });
-  return { remoteFileId: `mega:${remote.nodeId || remote}`, size: file.size };
+  try {
+    await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
+    const upload = storage.upload({ name, size: file.size });
+    fs.createReadStream(file.path).pipe(upload);
+    const remote = await new Promise((resolve, reject) => { upload.on('complete', resolve); upload.on('error', reject); });
+    return { remoteFileId: `mega:${remote.nodeId || remote}`, size: file.size };
+  } finally { storage.close?.(); }
 }
 async function uploadToProvider(file, provider, name, mimeType) {
   const config = decryptConfig(provider.config_json);
@@ -204,13 +209,56 @@ async function uploadToProvider(file, provider, name, mimeType) {
   if (provider.kind === 'mega') return uploadToMega(file, config, name);
   throw new Error(`Provider ${provider.kind} belum didukung.`);
 }
+async function deleteFromTelegram(remoteFileId, config) {
+  const parts = remoteFileId.split(':');
+  // format baru: telegram:chatId:messageId:fileId — bisa dihapus permanen di channel
+  // format lama: telegram:fileId — tidak menyimpan message_id, jadi tidak bisa dihapus dari channel via Bot API
+  if (parts.length < 4) return { skipped: true, reason: 'Record lama tanpa message_id, hapus manual di Telegram jika perlu.' };
+  const [, chatId, messageId] = parts;
+  const response = await fetch(`https://api.telegram.org/bot${config.botToken}/deleteMessage?chat_id=${encodeURIComponent(chatId)}&message_id=${encodeURIComponent(messageId)}`);
+  const result = await response.json();
+  // "message to delete not found" berarti sudah terhapus sebelumnya — anggap sukses, bukan error
+  if (!result.ok && !/message to delete not found/i.test(result.description || '')) throw new Error(result.description || `Gagal menghapus file di Telegram (HTTP ${response.status}).`);
+  return { skipped: false };
+}
+async function deleteFromGoogleDrive(remoteFileId, config) {
+  const fileId = remoteFileId.replace('gdrive:', '');
+  const accessToken = await getGoogleAccessToken(config);
+  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`, { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } });
+  if (response.status === 404) return { skipped: false }; // sudah tidak ada, anggap sukses
+  if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.error?.message || `Gagal menghapus file di Google Drive (HTTP ${response.status}).`); }
+  return { skipped: false };
+}
+async function deleteFromMega(remoteFileId, config) {
+  const nodeId = remoteFileId.replace('mega:', '');
+  const { Storage } = await import('megajs');
+  const storage = new Storage({ email: config.email, password: config.password });
+  await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
+  try {
+    const node = storage.files?.[nodeId] || Object.values(storage.files || {}).find((entry) => entry.nodeId === nodeId);
+    if (!node) return { skipped: true, reason: 'File tidak ditemukan di Mega, mungkin sudah terhapus sebelumnya.' };
+    await new Promise((resolve, reject) => node.delete(true, (error) => error ? reject(error) : resolve()));
+    return { skipped: false };
+  } finally { storage.close?.(); }
+}
+async function deleteFromProvider(file, provider) {
+  if (!file.remote_file_id || !provider) return { skipped: true, reason: 'Tidak ada remote_file_id atau provider.' };
+  const encryptedMatch = file.remote_file_id.match(/^enc:([^:]+):(.+)$/);
+  const remoteFileId = encryptedMatch ? encryptedMatch[2] : file.remote_file_id;
+  const config = decryptConfig(provider.config_json);
+  if (provider.kind === 'telegram') return deleteFromTelegram(remoteFileId, config);
+  if (provider.kind === 'gdrive') return deleteFromGoogleDrive(remoteFileId, config);
+  if (provider.kind === 'mega') return deleteFromMega(remoteFileId, config);
+  return { skipped: true, reason: `Provider ${provider.kind} tidak didukung untuk penghapusan remote.` };
+}
 async function sendRemoteFile(res, file, provider) {
   const config = decryptConfig(provider.config_json);
   const encryptedMatch = file.remote_file_id.match(/^enc:([^:]+):(.+)$/);
   const remoteFileId = encryptedMatch ? encryptedMatch[2] : file.remote_file_id;
   let response;
   if (provider.kind === 'telegram') {
-    const fileId = remoteFileId.replace('telegram:', '');
+    const telegramParts = remoteFileId.split(':');
+    const fileId = telegramParts.length >= 4 ? telegramParts[3] : telegramParts[1]; // format baru: telegram:chatId:messageId:fileId, lama: telegram:fileId
     const info = await fetch(`https://api.telegram.org/bot${config.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`).then((result) => result.json());
     if (!info.ok) throw new Error(info.description || 'Telegram file tidak ditemukan.');
     response = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${info.result.file_path}`);
@@ -310,18 +358,27 @@ app.patch('/api/folders/:id', requireUser, (req, res) => {
   audit(req.user.id, 'update', 'folder', folder.id);
   return json(res, { ok: true });
 });
-app.delete('/api/folders/:id', requireUser, (req, res) => {
+app.delete('/api/folders/:id', requireUser, async (req, res) => {
   const folder = db.prepare('SELECT id FROM folders WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
   if (!folder) return res.status(404).end();
   const deletedAt = now();
   const files = db.prepare("SELECT files.id, files.size, files.provider, files.remote_file_id FROM files WHERE files.owner_id = ? AND files.folder_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM folders WHERE id = ? UNION ALL SELECT folders.id FROM folders JOIN tree ON folders.parent_id = tree.id) SELECT id FROM tree) AND files.deleted_at IS NULL").all(req.user.id, folder.id);
+  const providerCache = new Map();
+  const failures = [];
   for (const file of files) {
+    let provider = providerCache.get(file.provider);
+    if (provider === undefined) { provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider) || null; providerCache.set(file.provider, provider); }
+    try { await deleteFromProvider(file, provider); }
+    catch (error) { failures.push({ fileId: file.id, provider: file.provider, error: error.message }); continue; } // best-effort: satu file gagal tidak menggagalkan seluruh penghapusan folder
     db.prepare('UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?').run(file.size, file.provider);
     if (file.remote_file_id) fs.rmSync(path.join(storageDir, file.remote_file_id), { force: true });
   }
   db.prepare("UPDATE folders SET deleted_at = ? WHERE owner_id = ? AND (id = ? OR id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM folders WHERE id = ? UNION ALL SELECT folders.id FROM folders JOIN tree ON folders.parent_id = tree.id) SELECT id FROM tree))").run(deletedAt, req.user.id, folder.id, folder.id);
-  db.prepare('UPDATE files SET deleted_at = ? WHERE owner_id = ? AND folder_id IN (SELECT id FROM folders WHERE owner_id = ? AND deleted_at = ?)').run(deletedAt, req.user.id, req.user.id, deletedAt);
+  const excludeClause = failures.length ? failures.map(() => '?').join(',') : 'SELECT -1';
+  db.prepare(`UPDATE files SET deleted_at = ? WHERE owner_id = ? AND folder_id IN (SELECT id FROM folders WHERE owner_id = ? AND deleted_at = ?) AND id NOT IN (${excludeClause})`)
+    .run(deletedAt, req.user.id, req.user.id, deletedAt, ...failures.map((entry) => entry.fileId));
   audit(req.user.id, 'delete', 'folder', folder.id);
+  if (failures.length) { audit(req.user.id, 'delete_partial_failure', 'folder', folder.id); return json(res, { ok: true, warning: `Folder dihapus, tapi ${failures.length} file gagal dihapus dari providernya dan tetap tercatat sebagai belum terhapus.`, failures }, 207); }
   return res.status(204).end();
 });
 
@@ -375,7 +432,18 @@ app.post('/api/files/cdn', requireUser, (req, res, next) => cdnUpload.single('fi
 });
 app.get('/api/files/:id/download', requireUser, async (req, res) => { const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return json(res, { error: 'File tidak ditemukan.' }, 404); try { return await sendRemoteFile(res, file, provider); } catch (error) { return json(res, { error: error.message }, 502); } });
 app.patch('/api/files/:id', requireUser, (req, res) => { const file = db.prepare('SELECT id FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id); if (!file) return json(res, { error: 'File tidak ditemukan.' }, 404); if (!req.body.name?.trim()) return json(res, { error: 'Nama file wajib diisi.' }, 400); db.prepare('UPDATE files SET name = ? WHERE id = ?').run(safeName(req.body.name.trim()), file.id); audit(req.user.id, 'rename', 'file', file.id); return json(res, { ok: true }); });
-app.delete('/api/files/:id', requireUser, (req, res) => { const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id); if (!file) return res.status(404).end(); db.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').run(now(), file.id); db.prepare('UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?').run(file.size, file.provider); if (file.remote_file_id) fs.rmSync(path.join(storageDir, file.remote_file_id), { force: true }); audit(req.user.id, 'delete', 'file', file.id); return res.status(204).end(); });
+app.delete('/api/files/:id', requireUser, async (req, res) => {
+  const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
+  if (!file) return res.status(404).end();
+  const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider);
+  try { await deleteFromProvider(file, provider); }
+  catch (error) { return json(res, { error: `File masih ada di ${provider?.kind || 'provider'}, gagal dihapus: ${error.message}` }, 502); }
+  db.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').run(now(), file.id);
+  db.prepare('UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?').run(file.size, file.provider);
+  if (file.remote_file_id) fs.rmSync(path.join(storageDir, file.remote_file_id), { force: true });
+  audit(req.user.id, 'delete', 'file', file.id);
+  return res.status(204).end();
+});
 app.post('/api/files/:id/share', requireUser, (req, res) => {
   const file = db.prepare('SELECT id, name, mime_type FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
   if (!file) return json(res, { error: 'File tidak ditemukan.' }, 404);
