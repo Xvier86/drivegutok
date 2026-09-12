@@ -313,4 +313,56 @@ Setelah itu `bash deploy.sh` sudah aman dipakai berulang kali tanpa langkah manu
 
 Mengubah `TRASH_RETENTION_DAYS` (masa simpan item di Sampah) dilakukan di `ecosystem.config.cjs` karena PM2 tidak membaca `.env`, lalu jalankan `pm2 restart ecosystem.config.cjs --update-env`. Skema database tidak perlu migrasi manual: `server.js` membuat tabel dan menambah kolom yang kurang saat aplikasi start.
 
+### Deploy ulang dari nol (VPS baru atau folder project hilang)
+
+`setup.sh` sudah menangani clone, pembuatan `.env`, generate `STORAGE_CONFIG_KEY`, izin file, dan start PM2. Dua hal yang wajib dijaga:
+
+- Pakai `STORAGE_CONFIG_KEY` yang sama dengan sebelumnya (ambil dari backup `.env` atau `~/ecosystem.config.cjs.bak`). Kalau nilainya berubah, seluruh kredensial provider yang tersimpan terenkripsi di SQLite tidak bisa didekrip lagi dan provider harus dikonfigurasi ulang dari panel Owner.
+- Kembalikan `data/` dari backup supaya user, session, folder, metadata file, dan konfigurasi provider ikut kembali.
+
+```bash
+# 1. Kembalikan data + secret dari backup (jalankan di /var/www/gutok-drive)
+tar -xzf gutok-drive-backup-YYYY-MM-DD-HHMM.tar.gz -C /var/www/gutok-drive
+
+# 2. Kalau folder project memang kosong, siapkan dulu kerangkanya
+bash setup.sh        # clone + .env + izin + pm2 start
+
+# 3. Baru tarik versi terbaru
+bash deploy.sh
+```
+
+Kalau backup hanya berisi `data/`, isi `STORAGE_CONFIG_KEY` di `.env` dan `ecosystem.config.cjs` dengan nilai yang sama seperti sebelumnya sebelum start.
+
+### Rollback ke versi sebelumnya
+
+```bash
+cd /var/www/gutok-drive
+pm2 stop gutok-drive
+git log --oneline -5                    # pilih commit tujuan
+git checkout -- ecosystem.config.cjs    # lepas suntikan secret lokal dulu (nilainya tetap ada di .env)
+git checkout <commit>                   # kembali ke main dengan: git checkout main
+SECRET=$(grep '^STORAGE_CONFIG_KEY=' .env | cut -d '=' -f2-)
+sed -i "s#STORAGE_CONFIG_KEY: '.*'#STORAGE_CONFIG_KEY: '${SECRET}'#" ecosystem.config.cjs
+npm ci --omit=dev
+pm2 restart ecosystem.config.cjs --update-env
+pm2 save
+pm2 logs gutok-drive --lines 50 --nostream
+```
+
+`git checkout <commit>` akan ditolak (`Your local changes ... would be overwritten by checkout`) kalau `ecosystem.config.cjs` masih berisi suntikan secret `setup.sh`, jadi baris `git checkout -- ecosystem.config.cjs` di atas wajib dijalankan lebih dulu. Setelah commit-nya pindah, file itu kembali ke placeholder sehingga langkah `sed` juga wajib dijalankan sebelum restart. Rollback tidak perlu migrasi database: perubahan skema sejauh ini hanya menambah kolom, dan versi lama mengabaikan kolom yang tidak dikenalinya. Setelah kode baik lagi, jalankan `bash deploy.sh` untuk kembali ke `main` — `update-code.sh` menangani perpindahan dari detached HEAD itu.
+
+### Verifikasi setelah deploy
+
+```bash
+pm2 status
+git log --oneline -1
+grep -o "STORAGE_CONFIG_KEY: '.\{6\}" ecosystem.config.cjs   # pastikan bukan 'ganti-'
+curl -s http://127.0.0.1:3000/api/setup
+pm2 logs gutok-drive --lines 50 --nostream
+```
+
+Lanjutkan dari browser: login, upload file kecil, buka menu **Sampah**, dan uji satu tombol **Pindahkan**/**CDN**.
+
+Kalau `pm2 restart ecosystem.config.cjs --update-env` terasa tidak memuat env baru, paksa dengan `pm2 delete gutok-drive && pm2 start ecosystem.config.cjs && pm2 save`.
+
 Sesuaikan `APP_DIR` di `deploy.sh` maupun `setup.sh` kalau lokasi project bukan `/var/www/gutok-drive`.
