@@ -360,6 +360,14 @@ Jalan tercepat — satu perintah yang mengerjakan semuanya (tarik kode, deploy, 
 cd ~/drivegutok && git pull origin main && bash ~/drivegutok/perbaiki-vps.sh
 ```
 
+Kalau `perbaiki-vps.sh` masih gagal (misalnya file lama yang tidak dilacak bikin merge ditolak), ada opsi **deploy bersih dari nol** — backup database + secret, hapus seluruh folder, clone fresh, restore, verifikasi:
+
+```bash
+cd ~/drivegutok && git pull origin main && bash ~/drivegutok/deploy-bersih.sh
+```
+
+`deploy-bersih.sh` aman untuk database: `data/`, `.env`, dan `STORAGE_CONFIG_KEY` disalin ke `/tmp` sebelum apa pun dihapus, dan dipulihkan setelah clone selesai. Kalau backup gagal, skrip berhenti tanpa menyentuh apa pun. Hasilnya sama: `[OK]`/`[GAGAL]` per pemeriksaan, exit code = jumlah kegagalan.
+
 `perbaiki-vps.sh` mencetak `[OK]`/`[GAGAL]` untuk setiap pemeriksaan dan keluar dengan jumlah kegagalan (0 = sukses), sehingga hasilnya bisa langsung ditempel untuk ditelusuri kalau ada yang tidak lolos. Skrip ini juga mengulang sendiri prosesnya kalau ternyata versinya baru saja berubah setelah `git pull`. Kalau lebih suka langkah manual, urutannya sama dengan deploy biasa:
 
 ```bash
