@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ====== EDIT DULU 3 BARIS INI ======
-REPO_URL="git@github.com:USERNAME/REPO.git"   # ganti sesuai repo lo
+REPO_URL="https://github.com/Xvier86/drivegutok.git"   # ganti sesuai repo lo
 APP_DIR="/var/www/gutok-drive"
 BRANCH="main"
 # ====================================
