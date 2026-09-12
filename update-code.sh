@@ -27,9 +27,16 @@ fi
 
 if ! git diff --quiet -- ecosystem.config.cjs; then
   echo ">> ecosystem.config.cjs dimodifikasi lokal (secret dari setup.sh)."
-  echo ">> Dikembalikan ke versi repo, secret disuntik ulang dari .env setelah pull."
+  echo ">> Dikembalikan ke versi repo, secret disuntik ulang setelah pull."
   git checkout -- ecosystem.config.cjs
 fi
+
+suntik_secret() {
+  if [ -z "$SECRET" ]; then
+    return 0
+  fi
+  sed -i "s#STORAGE_CONFIG_KEY: '.*'#STORAGE_CONFIG_KEY: '${SECRET}'#" ecosystem.config.cjs
+}
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
@@ -38,11 +45,18 @@ if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
 fi
 
 git fetch origin "$BRANCH"
-git merge --ff-only "origin/$BRANCH"
 
-if [ -n "$SECRET" ]; then
-  sed -i "s#STORAGE_CONFIG_KEY: '.*'#STORAGE_CONFIG_KEY: '${SECRET}'#" ecosystem.config.cjs
-else
+if ! git merge --ff-only "origin/$BRANCH"; then
+  echo "!! git merge --ff-only gagal (biasanya karena ada commit lokal di VPS)."
+  echo "!! Kode tidak diubah. Secret disuntik ulang supaya ecosystem.config.cjs tetap benar."
+  suntik_secret
+  exit 1
+fi
+
+# Merge menimpa ecosystem.config.cjs dengan versi repo (secret balik ke placeholder), suntik ulang.
+suntik_secret
+
+if [ -z "$SECRET" ]; then
   echo "!! STORAGE_CONFIG_KEY tidak ditemukan di .env maupun ecosystem.config.cjs."
   echo "!! Isi manual sebelum restart, kalau tidak config provider lama tidak bisa didekrip."
 fi
