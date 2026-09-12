@@ -92,6 +92,7 @@ async function toggleCdn(fileId, enabled) {
     else notify(enabled ? 'CDN diaktifkan.' : 'CDN dimatikan. Link lamanya sudah tidak bisa diakses.');
     await renderDashboard();
   } catch (error) { notify(error.message); }
+}
 async function renderTrash() {
   const data = await api('/api/trash');
   const items = [...data.folders.map((folder) => `<article class="trash-row"><div class="file-icon">${icon('folder',22)}</div><div class="trash-info"><div class="file-name">${esc(folder.name)}</div><div class="file-meta">Folder · dihapus ${formatDateTime(folder.deleted_at)}</div></div><div class="trash-actions"><button class="icon-btn trash-restore" data-kind="folder" data-id="${folder.id}" data-name="${esc(folder.name)}" title="Pulihkan folder">${icon('rotate-ccw',14)}</button><button class="icon-btn danger trash-purge" data-kind="folder" data-id="${folder.id}" data-name="${esc(folder.name)}" title="Hapus permanen">${icon('trash-2',14)}</button></div></article>`), ...data.files.map((file) => `<article class="trash-row"><div class="file-icon">${icon('file',22)}</div><div class="trash-info"><div class="file-name">${esc(file.name)}</div><div class="file-meta">${formatBytes(file.size)} · ${esc(file.provider)} · dihapus ${formatDateTime(file.deleted_at)}</div></div><div class="trash-actions"><button class="icon-btn trash-restore" data-kind="file" data-id="${file.id}" data-name="${esc(file.name)}" title="Pulihkan file">${icon('rotate-ccw',14)}</button><button class="icon-btn danger trash-purge" data-kind="file" data-id="${file.id}" data-name="${esc(file.name)}" title="Hapus permanen">${icon('trash-2',14)}</button></div></article>`)].join('');
@@ -136,4 +137,3 @@ async function emptyTrash() {
   finally { hideLoading(); }
 }
 
-}

@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check cleanup.js && node --check assets/app.js"
+    "check": "node --check server.js && node --check cleanup.js && node --check assets/app.js && node uji-lingkup-app.mjs"
   },
   "engines": {
     "node": ">=20"
