@@ -12,7 +12,9 @@ module.exports = {
       // Kalau value ini beda dari sebelumnya, semua config provider (token/password) yang sudah
       // tersimpan terenkripsi di SQLite tidak akan bisa didekrip lagi.
       STORAGE_CONFIG_KEY: 'ganti-dengan-secret-acak-minimal-32-karakter',
-      MAX_FILE_SIZE: 5368709120
+      MAX_FILE_SIZE: 5368709120,
+      // Masa simpan item di Sampah (hari) sebelum dibersihkan otomatis. Opsional, default 30.
+      TRASH_RETENTION_DAYS: 30
     }
   }]
 };

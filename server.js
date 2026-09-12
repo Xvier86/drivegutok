@@ -349,6 +349,104 @@ function audit(actorId, action, targetType, targetId = null) {
   db.prepare('INSERT INTO audit_logs (id, actor_id, action, target_type, target_id, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id(), actorId, action, targetType, targetId, now());
 }
 
+// ---------------------------------------------------------------------------
+// Sampah (trash), pindah item, dan traversal folder.
+// Mengikuti perilaku Google Drive: item yang dihapus TIDAK langsung hilang dari
+// provider, tetapi dipindahkan ke Sampah supaya bisa dipulihkan. Item baru benar-benar
+// dihapus dari provider kalau user memilih "hapus permanen"/"kosongkan sampah", atau
+// setelah masa simpan sampah habis (default 30 hari, atur lewat TRASH_RETENTION_DAYS).
+// ---------------------------------------------------------------------------
+const trashRetentionDays = Number(process.env.TRASH_RETENTION_DAYS || 30);
+const isCdnMime = (mimeType) => /^(image|video)\//.test(String(mimeType || ''));
+const newCdnSlug = () => crypto.randomBytes(18).toString('hex');
+// Batas kedalaman semua traversal folder rekursif. Database dari versi lama bisa berisi
+// relasi folder melingkar (A -> B -> A) karena dulu parentId tidak divalidasi; tanpa batas
+// ini query rekursif akan menggantungkan proses Node selamanya.
+const folderDepthLimit = 100;
+function visibleFolder(ownerId, folderId) {
+  if (!folderId) return null;
+  return db.prepare('SELECT id, name, parent_id FROM folders WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(String(folderId), ownerId) || null;
+}
+function folderDescendantIds(ownerId, folderId) {
+  return db.prepare(`WITH RECURSIVE tree(id, depth) AS (
+      SELECT id, 0 FROM folders WHERE owner_id = ? AND id = ?
+      UNION ALL
+      SELECT folders.id, tree.depth + 1 FROM folders JOIN tree ON folders.parent_id = tree.id WHERE folders.owner_id = ? AND tree.depth < ?
+    ) SELECT id FROM tree`).all(ownerId, folderId, ownerId, folderDepthLimit).map((row) => row.id);
+}
+function folderTree(ownerId) {
+  return db.prepare(`WITH RECURSIVE tree(id, name, parent_id, depth) AS (
+      SELECT id, name, parent_id, 0 FROM folders WHERE owner_id = ? AND parent_id IS NULL AND deleted_at IS NULL
+      UNION ALL
+      SELECT folders.id, folders.name, folders.parent_id, tree.depth + 1 FROM folders JOIN tree ON folders.parent_id = tree.id WHERE folders.owner_id = ? AND folders.deleted_at IS NULL AND tree.depth < ?
+    ) SELECT id, name, parent_id, depth FROM tree ORDER BY depth, name COLLATE NOCASE`).all(ownerId, ownerId, folderDepthLimit);
+}
+function folderPath(ownerId, folderId) {
+  const path = [];
+  const seen = new Set();
+  let current = folderId;
+  while (current && !seen.has(current) && path.length < folderDepthLimit) {
+    seen.add(current);
+    const folder = db.prepare('SELECT id, name, parent_id FROM folders WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(current, ownerId);
+    if (!folder) break;
+    path.unshift({ id: folder.id, name: folder.name });
+    current = folder.parent_id;
+  }
+  return path;
+}
+// null/'' berarti root (MyDrive). Dipakai file maupun folder supaya tujuan yang tidak ada
+// atau bukan milik user tidak pernah tersimpan diam-diam.
+function resolveTargetFolder(ownerId, rawValue) {
+  if (rawValue === null || rawValue === undefined || rawValue === '') return { ok: true, folderId: null };
+  const folder = visibleFolder(ownerId, rawValue);
+  if (!folder) return { ok: false, status: 404, error: 'Folder tujuan tidak ditemukan.' };
+  return { ok: true, folderId: folder.id };
+}
+// Hapus permanen satu file: dari provider remote sekaligus dari database.
+async function purgeFileRecord(file) {
+  const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider);
+  const result = await deleteFromProvider(file, provider);
+  db.prepare('UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?').run(file.size, file.provider);
+  if (file.remote_file_id) fs.rmSync(path.join(storageDir, file.remote_file_id), { force: true });
+  db.prepare('DELETE FROM shares WHERE file_id = ?').run(file.id);
+  db.prepare('DELETE FROM files WHERE id = ?').run(file.id);
+  return result;
+}
+// Hapus permanen satu folder beserta isinya. Kalau ada file yang gagal dihapus dari
+// provider, folder tidak diturunkan dari database supaya user masih bisa mencoba lagi.
+async function purgeFolderTree(ownerId, folderId) {
+  const ids = folderDescendantIds(ownerId, folderId);
+  const placeholders = ids.map(() => '?').join(',');
+  const files = db.prepare(`SELECT * FROM files WHERE owner_id = ? AND folder_id IN (${placeholders})`).all(ownerId, ...ids);
+  const failures = [];
+  for (const file of files) {
+    try { await purgeFileRecord(file); }
+    catch (error) { failures.push({ fileId: file.id, name: file.name, error: error.message }); }
+  }
+  if (!failures.length) db.prepare(`DELETE FROM folders WHERE owner_id = ? AND id IN (${placeholders})`).run(ownerId, ...ids);
+  return { ids, failures };
+}
+async function emptyTrashFor(ownerId) {
+  const files = db.prepare('SELECT * FROM files WHERE owner_id = ? AND deleted_at IS NOT NULL').all(ownerId);
+  const failures = [];
+  let deletedFiles = 0;
+  for (const file of files) {
+    try { await purgeFileRecord(file); deletedFiles += 1; }
+    catch (error) { failures.push({ fileId: file.id, name: file.name, error: error.message }); }
+  }
+  const folders = db.prepare('DELETE FROM folders WHERE owner_id = ? AND deleted_at IS NOT NULL').run(ownerId);
+  return { deletedFiles, deletedFolders: folders.changes, failures };
+}
+// Item di Sampah yang sudah lewat masa simpan dibersihkan otomatis tanpa aksi user.
+async function purgeExpiredTrash(ownerId) {
+  const cutoff = new Date(Date.now() - trashRetentionDays * 86400000).toISOString();
+  const stale = db.prepare('SELECT * FROM files WHERE owner_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?').all(ownerId, cutoff);
+  for (const file of stale) {
+    try { await purgeFileRecord(file); } catch { /* provider sedang bermasalah: dicoba lagi saat sampah dibuka berikutnya */ }
+  }
+  db.prepare('DELETE FROM folders WHERE owner_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?').run(ownerId, cutoff);
+}
+
 app.get('/api/setup', (_req, res) => json(res, { needsSetup: db.prepare('SELECT COUNT(*) AS count FROM users').get().count === 0 }));
 app.post('/api/setup', (req, res) => {
   if (db.prepare('SELECT COUNT(*) AS count FROM users').get().count > 0) return json(res, { error: 'Owner sudah dibuat.' }, 409);
@@ -371,45 +469,107 @@ app.post('/api/logout', (req, res) => { const token = req.headers.cookie?.match(
 
 app.get('/api/me', requireUser, (req, res) => json(res, { user: req.user }));
 app.get('/api/dashboard', requireUser, (req, res) => {
-  const folderId = req.query.folderId || null;
+  const requestedFolderId = req.query.folderId || null;
+  // Folder yang sudah masuk Sampah (atau bukan milik user) tidak boleh jadi lokasi aktif,
+  // kalau tidak UI nyangkut menampilkan folder kosong yang sudah tidak ada.
+  const current = requestedFolderId ? visibleFolder(req.user.id, requestedFolderId) : null;
+  const folderId = current ? current.id : null;
   const folders = db.prepare('SELECT id, name, parent_id, created_at FROM folders WHERE owner_id = ? AND parent_id IS ? AND deleted_at IS NULL ORDER BY name').all(req.user.id, folderId);
   const files = db.prepare("SELECT id, name, mime_type, size, provider, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at FROM files WHERE owner_id = ? AND folder_id IS ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY uploaded_at DESC").all(req.user.id, folderId, now());
   const providers = db.prepare("SELECT id, name, kind, enabled, used_bytes, capacity_bytes FROM providers WHERE kind != 'local' ORDER BY name").all();
   const stats = db.prepare("SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM files WHERE owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.user.id, now());
-  return json(res, { folders, files, providers, stats, folderId, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) });
+  const trashCount = db.prepare('SELECT (SELECT COUNT(*) FROM files WHERE owner_id = ? AND deleted_at IS NOT NULL) + (SELECT COUNT(*) FROM folders WHERE owner_id = ? AND deleted_at IS NOT NULL) AS count').get(req.user.id, req.user.id).count;
+  return json(res, { folders, files, providers, stats, folderId, path: folderPath(req.user.id, folderId), trashCount, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) });
 });
-app.post('/api/folders', requireUser, (req, res) => { if (!req.body.name?.trim()) return json(res, { error: 'Nama folder wajib diisi.' }, 400); const folder = { id: id(), name: req.body.name.trim(), parent_id: req.body.parentId || null, owner_id: req.user.id, created_at: now() }; db.prepare('INSERT INTO folders (id, owner_id, parent_id, name, created_at) VALUES (?, ?, ?, ?, ?)').run(folder.id, folder.owner_id, folder.parent_id, folder.name, folder.created_at); audit(req.user.id, 'create', 'folder', folder.id); return json(res, folder, 201); });
+app.post('/api/folders', requireUser, (req, res) => {
+  const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+  if (!name) return json(res, { error: 'Nama folder wajib diisi.' }, 400);
+  const target = resolveTargetFolder(req.user.id, req.body.parentId);
+  if (!target.ok) return json(res, { error: target.error }, target.status);
+  const folder = { id: id(), name, parent_id: target.folderId, owner_id: req.user.id, created_at: now() };
+  db.prepare('INSERT INTO folders (id, owner_id, parent_id, name, created_at) VALUES (?, ?, ?, ?, ?)').run(folder.id, folder.owner_id, folder.parent_id, folder.name, folder.created_at);
+  audit(req.user.id, 'create', 'folder', folder.id);
+  return json(res, folder, 201);
+});
+// Daftar folder (datar + tingkat kedalaman) untuk pemilih folder tujuan saat memindahkan item.
+app.get('/api/folders', requireUser, (req, res) => json(res, { folders: folderTree(req.user.id) }));
 app.patch('/api/folders/:id', requireUser, (req, res) => {
-  const folder = db.prepare('SELECT id FROM folders WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
+  const folder = db.prepare('SELECT * FROM folders WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
   if (!folder) return json(res, { error: 'Folder tidak ditemukan.' }, 404);
-  if (!req.body.name?.trim() && req.body.parentId === undefined) return json(res, { error: 'Nama atau folder tujuan wajib diisi.' }, 400);
-  if (req.body.name?.trim()) db.prepare('UPDATE folders SET name = ? WHERE id = ?').run(req.body.name.trim(), folder.id);
-  if (req.body.parentId !== undefined) db.prepare('UPDATE folders SET parent_id = ? WHERE id = ?').run(req.body.parentId || null, folder.id);
-  audit(req.user.id, 'update', 'folder', folder.id);
-  return json(res, { ok: true });
+  const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+  const hasParent = req.body.parentId !== undefined;
+  if (!name && !hasParent) return json(res, { error: 'Tidak ada perubahan. Kirim name (ganti nama) atau parentId (pindah).' }, 400);
+  // Validasi dulu sebelum menyimpan: folder tidak boleh dipindahkan ke dalam dirinya
+  // sendiri atau ke salah satu subfolder miliknya, karena relasi melingkar seperti itu
+  // membuat folder menghilang dari daftar dan traversal rekursif berputar tanpa henti.
+  let parentId = folder.parent_id;
+  if (hasParent) {
+    const target = resolveTargetFolder(req.user.id, req.body.parentId);
+    if (!target.ok) return json(res, { error: target.error }, target.status);
+    if (target.folderId === folder.id) return json(res, { error: 'Folder tidak bisa dipindahkan ke dalam dirinya sendiri.' }, 400);
+    if (target.folderId && folderDescendantIds(req.user.id, folder.id).includes(target.folderId)) return json(res, { error: 'Folder tidak bisa dipindahkan ke dalam subfolder miliknya sendiri.' }, 400);
+    parentId = target.folderId;
+  }
+  if (name) { db.prepare('UPDATE folders SET name = ? WHERE id = ?').run(name, folder.id); audit(req.user.id, 'rename', 'folder', folder.id); }
+  if (hasParent && parentId !== folder.parent_id) { db.prepare('UPDATE folders SET parent_id = ? WHERE id = ?').run(parentId, folder.id); audit(req.user.id, 'move', 'folder', folder.id); }
+  return json(res, { ok: true, parentId });
 });
-app.delete('/api/folders/:id', requireUser, async (req, res) => {
+app.delete('/api/folders/:id', requireUser, (req, res) => {
   const folder = db.prepare('SELECT id FROM folders WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
   if (!folder) return res.status(404).end();
   const deletedAt = now();
-  const files = db.prepare("SELECT files.id, files.size, files.provider, files.remote_file_id FROM files WHERE files.owner_id = ? AND files.folder_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM folders WHERE id = ? UNION ALL SELECT folders.id FROM folders JOIN tree ON folders.parent_id = tree.id) SELECT id FROM tree) AND files.deleted_at IS NULL").all(req.user.id, folder.id);
-  const providerCache = new Map();
-  const failures = [];
-  for (const file of files) {
-    let provider = providerCache.get(file.provider);
-    if (provider === undefined) { provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider) || null; providerCache.set(file.provider, provider); }
-    try { await deleteFromProvider(file, provider); }
-    catch (error) { failures.push({ fileId: file.id, provider: file.provider, error: error.message }); continue; } // best-effort: satu file gagal tidak menggagalkan seluruh penghapusan folder
-    db.prepare('UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?').run(file.size, file.provider);
-    if (file.remote_file_id) fs.rmSync(path.join(storageDir, file.remote_file_id), { force: true });
-  }
-  db.prepare("UPDATE folders SET deleted_at = ? WHERE owner_id = ? AND (id = ? OR id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM folders WHERE id = ? UNION ALL SELECT folders.id FROM folders JOIN tree ON folders.parent_id = tree.id) SELECT id FROM tree))").run(deletedAt, req.user.id, folder.id, folder.id);
-  const excludeClause = failures.length ? failures.map(() => '?').join(',') : 'SELECT -1';
-  db.prepare(`UPDATE files SET deleted_at = ? WHERE owner_id = ? AND folder_id IN (SELECT id FROM folders WHERE owner_id = ? AND deleted_at = ?) AND id NOT IN (${excludeClause})`)
-    .run(deletedAt, req.user.id, req.user.id, deletedAt, ...failures.map((entry) => entry.fileId));
-  audit(req.user.id, 'delete', 'folder', folder.id);
-  if (failures.length) { audit(req.user.id, 'delete_partial_failure', 'folder', folder.id); return json(res, { ok: true, warning: `Folder dihapus, tapi ${failures.length} file gagal dihapus dari providernya dan tetap tercatat sebagai belum terhapus.`, failures }, 207); }
+  const ids = folderDescendantIds(req.user.id, folder.id);
+  const placeholders = ids.map(() => '?').join(',');
+  // Soft delete: file tetap tersimpan di provider (dan tetap terhitung sebagai pemakaian
+  // storage) sampai user menghapusnya permanen dari Sampah — sama seperti Google Drive.
+  db.prepare(`UPDATE folders SET deleted_at = ? WHERE owner_id = ? AND id IN (${placeholders})`).run(deletedAt, req.user.id, ...ids);
+  db.prepare(`UPDATE files SET deleted_at = ? WHERE owner_id = ? AND folder_id IN (${placeholders}) AND deleted_at IS NULL`).run(deletedAt, req.user.id, ...ids);
+  audit(req.user.id, 'trash', 'folder', folder.id);
   return res.status(204).end();
+});
+app.post('/api/folders/:id/restore', requireUser, (req, res) => {
+  const folder = db.prepare('SELECT * FROM folders WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL').get(req.params.id, req.user.id);
+  if (!folder) return json(res, { error: 'Folder tidak ada di Sampah.' }, 404);
+  const restoredAt = folder.deleted_at;
+  const ids = folderDescendantIds(req.user.id, folder.id);
+  const placeholders = ids.map(() => '?').join(',');
+  // Hanya isi yang terhapus bersamaan (deleted_at sama) yang ikut dipulihkan; file/folder
+  // yang dulu dihapus terpisah tetap tinggal di Sampah.
+  db.prepare(`UPDATE folders SET deleted_at = NULL WHERE owner_id = ? AND id IN (${placeholders}) AND deleted_at = ?`).run(req.user.id, ...ids, restoredAt);
+  db.prepare(`UPDATE files SET deleted_at = NULL WHERE owner_id = ? AND folder_id IN (${placeholders}) AND deleted_at = ?`).run(req.user.id, ...ids, restoredAt);
+  // Kalau folder induknya juga ikut terhapus, folder ini dikembalikan ke MyDrive (root).
+  const parent = visibleFolder(req.user.id, folder.parent_id);
+  const parentId = parent ? parent.id : null;
+  db.prepare('UPDATE folders SET parent_id = ? WHERE id = ?').run(parentId, folder.id);
+  audit(req.user.id, 'restore', 'folder', folder.id);
+  return json(res, { ok: true, parentId, movedToRoot: Boolean(folder.parent_id) && !parent });
+});
+app.delete('/api/folders/:id/permanent', requireUser, async (req, res) => {
+  const folder = db.prepare('SELECT id FROM folders WHERE id = ? AND owner_id = ?').get(req.params.id, req.user.id);
+  if (!folder) return res.status(404).end();
+  let result;
+  try { result = await purgeFolderTree(req.user.id, folder.id); }
+  catch (error) { return json(res, { error: `Folder gagal dihapus permanen: ${error.message}` }, 502); }
+  audit(req.user.id, 'delete_permanent', 'folder', folder.id);
+  if (result.failures.length) return json(res, { ok: true, warning: `Folder belum dihapus permanen: ${result.failures.length} file gagal dihapus dari provider. Coba lagi setelah masalah provider beres.`, failures: result.failures }, 207);
+  return res.status(204).end();
+});
+app.get('/api/trash', requireUser, async (req, res) => {
+  await purgeExpiredTrash(req.user.id);
+  const files = db.prepare('SELECT id, name, mime_type, size, provider, folder_id, encrypted, deleted_at FROM files WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC').all(req.user.id);
+  const folders = db.prepare('SELECT id, name, parent_id, deleted_at FROM folders WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC').all(req.user.id);
+  const trashedFolderIds = new Set(folders.map((folder) => folder.id));
+  // Hanya folder teratas: isi folder yang terhapus sudah terwakili oleh foldernya.
+  // File yang dihapus satu per satu tetap tampil sebagai item tersendiri.
+  const topFolders = folders.filter((folder) => !folder.parent_id || !trashedFolderIds.has(folder.parent_id));
+  const looseFiles = files.filter((file) => !file.folder_id || !trashedFolderIds.has(file.folder_id));
+  return json(res, { folders: topFolders, files: looseFiles, counts: { files: looseFiles.length, folders: topFolders.length, all: files.length + folders.length }, retentionDays: trashRetentionDays });
+});
+app.delete('/api/trash', requireUser, async (req, res) => {
+  const result = await emptyTrashFor(req.user.id);
+  audit(req.user.id, 'empty_trash', 'trash', null);
+  if (result.failures.length) return json(res, { ok: true, warning: `${result.deletedFiles} file dihapus permanen, ${result.failures.length} file gagal dan masih ada di Sampah.`, ...result }, 207);
+  return json(res, { ok: true, deletedFiles: result.deletedFiles, deletedFolders: result.deletedFolders, failures: [] });
 });
 
 app.post('/api/files', requireUser, upload.single('file'), async (req, res) => {
@@ -438,7 +598,7 @@ app.post('/api/files', requireUser, upload.single('file'), async (req, res) => {
     const uploaded = await uploadToProvider(uploadFile, provider, safeName(name), mimeType);
     const fileId = id();
     const remoteFileId = encrypted ? `enc:${uploadFile.iv}:${uploaded.remoteFileId}` : uploaded.remoteFileId;
-    const record = { id: fileId, owner_id: req.user.id, folder_id: req.body.folderId || null, name: safeName(name), mime_type: mimeType, size: uploaded.size, provider: provider.id, remote_file_id: remoteFileId, uploaded_by: req.user.id, uploaded_at: now(), cdn_enabled: /^(image|video)\//.test(mimeType) ? 1 : 0, cdn_slug: /^(image|video)\//.test(mimeType) ? crypto.randomBytes(18).toString('hex') : null, encrypted: encrypted ? 1 : 0, retention_type: retentionType, retention_value: retentionValue, expires_at: expiresAt };
+    const record = { id: fileId, owner_id: req.user.id, folder_id: req.body.folderId || null, name: safeName(name), mime_type: mimeType, size: uploaded.size, provider: provider.id, remote_file_id: remoteFileId, uploaded_by: req.user.id, uploaded_at: now(), cdn_enabled: isCdnMime(mimeType) && !encrypted ? 1 : 0, cdn_slug: isCdnMime(mimeType) && !encrypted ? newCdnSlug() : null, encrypted: encrypted ? 1 : 0, retention_type: retentionType, retention_value: retentionValue, expires_at: expiresAt };
     db.prepare('INSERT INTO files (id, owner_id, folder_id, name, mime_type, size, provider, remote_file_id, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(record.id, record.owner_id, record.folder_id, record.name, record.mime_type, record.size, record.provider, record.remote_file_id, record.uploaded_by, record.uploaded_at, record.cdn_enabled, record.cdn_slug, record.encrypted, record.retention_type, record.retention_value, record.expires_at);
     db.prepare('UPDATE providers SET used_bytes = used_bytes + ? WHERE id = ?').run(record.size, provider.id); audit(req.user.id, 'upload', 'file', record.id); return json(res, record, 201);
   } catch (error) { return json(res, { error: `Upload ${provider.kind} gagal: ${error.message}` }, 502); }
@@ -458,29 +618,73 @@ app.post('/api/files/cdn', requireUser, (req, res, next) => cdnUpload.single('fi
   if (provider.capacity_bytes > 0 && provider.used_bytes + file.size > provider.capacity_bytes) { fs.rmSync(file.path, { force: true }); return json(res, { error: 'Kapasitas provider tidak mencukupi.' }, 409); }
   try {
     const uploaded = await uploadToProvider(file, provider, safeName(name), mimeType);
-    const record = { id: id(), owner_id: req.user.id, folder_id: req.body.folderId || null, name: safeName(name), mime_type: mimeType, size: uploaded.size, provider: provider.id, remote_file_id: uploaded.remoteFileId, uploaded_by: req.user.id, uploaded_at: now(), cdn_enabled: 1, cdn_slug: crypto.randomBytes(18).toString('hex'), encrypted: 0, retention_type: retentionType, retention_value: retentionValue, expires_at: expiresAt };
+    const record = { id: id(), owner_id: req.user.id, folder_id: req.body.folderId || null, name: safeName(name), mime_type: mimeType, size: uploaded.size, provider: provider.id, remote_file_id: uploaded.remoteFileId, uploaded_by: req.user.id, uploaded_at: now(), cdn_enabled: 1, cdn_slug: newCdnSlug(), encrypted: 0, retention_type: retentionType, retention_value: retentionValue, expires_at: expiresAt };
     db.prepare('INSERT INTO files (id, owner_id, folder_id, name, mime_type, size, provider, remote_file_id, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(record.id, record.owner_id, record.folder_id, record.name, record.mime_type, record.size, record.provider, record.remote_file_id, record.uploaded_by, record.uploaded_at, record.cdn_enabled, record.cdn_slug, record.encrypted, record.retention_type, record.retention_value, record.expires_at);
     db.prepare('UPDATE providers SET used_bytes = used_bytes + ? WHERE id = ?').run(record.size, provider.id); audit(req.user.id, 'upload_cdn', 'file', record.id); return json(res, { ...record, cdnUrl: `/cdn/${record.cdn_slug}` }, 201);
   } catch (error) { return json(res, { error: `Upload CDN gagal: ${error.message}` }, 502); }
   finally { fs.rmSync(file.path, { force: true }); }
 });
 app.get('/api/files/:id/download', requireUser, async (req, res) => { const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return json(res, { error: 'File tidak ditemukan.' }, 404); try { return await sendRemoteFile(res, file, provider); } catch (error) { return json(res, { error: error.message }, 502); } });
-app.patch('/api/files/:id', requireUser, (req, res) => { const file = db.prepare('SELECT id FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id); if (!file) return json(res, { error: 'File tidak ditemukan.' }, 404); if (!req.body.name?.trim()) return json(res, { error: 'Nama file wajib diisi.' }, 400); db.prepare('UPDATE files SET name = ? WHERE id = ?').run(safeName(req.body.name.trim()), file.id); audit(req.user.id, 'rename', 'file', file.id); return json(res, { ok: true }); });
-app.delete('/api/files/:id', requireUser, async (req, res) => {
+app.patch('/api/files/:id', requireUser, (req, res) => {
   const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
+  if (!file) return json(res, { error: 'File tidak ditemukan.' }, 404);
+  const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+  const hasFolder = req.body.folderId !== undefined;
+  const hasCdn = req.body.cdnEnabled !== undefined;
+  if (!name && !hasFolder && !hasCdn) return json(res, { error: 'Tidak ada perubahan. Kirim name (ganti nama), folderId (pindah), atau cdnEnabled (CDN).' }, 400);
+  // Semua validasi dijalankan sebelum menyimpan supaya request yang gagal tidak
+  // meninggalkan perubahan setengah jalan.
+  let targetFolderId = file.folder_id;
+  if (hasFolder) {
+    const target = resolveTargetFolder(req.user.id, req.body.folderId);
+    if (!target.ok) return json(res, { error: target.error }, target.status);
+    targetFolderId = target.folderId;
+  }
+  let cdnEnabled = file.cdn_enabled === 1;
+  let cdnSlugValue = file.cdn_slug;
+  if (hasCdn) {
+    cdnEnabled = req.body.cdnEnabled === true || req.body.cdnEnabled === 'true';
+    if (cdnEnabled && !isCdnMime(file.mime_type)) return json(res, { error: 'Hanya gambar dan video yang bisa dipublikasikan lewat CDN.' }, 400);
+    if (cdnEnabled && file.encrypted) return json(res, { error: 'File terenkripsi tidak bisa dipublikasikan ke CDN karena CDN melayani isi file apa adanya. Upload ulang tanpa enkripsi kalau mau dipakai di kode/website.' }, 409);
+    if (cdnEnabled && !cdnSlugValue) cdnSlugValue = newCdnSlug();
+  }
+  if (name) { db.prepare('UPDATE files SET name = ? WHERE id = ?').run(safeName(name), file.id); audit(req.user.id, 'rename', 'file', file.id); }
+  if (hasFolder && targetFolderId !== file.folder_id) { db.prepare('UPDATE files SET folder_id = ? WHERE id = ?').run(targetFolderId, file.id); audit(req.user.id, 'move', 'file', file.id); }
+  if (hasCdn && cdnEnabled !== (file.cdn_enabled === 1)) { db.prepare('UPDATE files SET cdn_enabled = ?, cdn_slug = ? WHERE id = ?').run(cdnEnabled ? 1 : 0, cdnSlugValue, file.id); audit(req.user.id, cdnEnabled ? 'cdn_enable' : 'cdn_disable', 'file', file.id); }
+  return json(res, { ok: true, folderId: targetFolderId, cdnEnabled, cdnUrl: cdnEnabled && cdnSlugValue ? `/cdn/${cdnSlugValue}` : null });
+});
+app.delete('/api/files/:id', requireUser, (req, res) => {
+  const file = db.prepare('SELECT id FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
   if (!file) return res.status(404).end();
-  const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider);
+  // Soft delete: file tetap tersimpan di provider (dan tetap terhitung sebagai pemakaian
+  // storage) sampai user menghapusnya permanen dari Sampah — sama seperti Google Drive.
+  db.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').run(now(), file.id);
+  audit(req.user.id, 'trash', 'file', file.id);
+  return res.status(204).end();
+});
+app.post('/api/files/:id/restore', requireUser, (req, res) => {
+  const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL').get(req.params.id, req.user.id);
+  if (!file) return json(res, { error: 'File tidak ada di Sampah.' }, 404);
+  // Kalau folder asalnya ikut terhapus/sudah tidak ada, file dikembalikan ke MyDrive
+  // supaya tidak menghilang di dalam folder yang tidak tampil.
+  const parent = visibleFolder(req.user.id, file.folder_id);
+  const folderId = parent ? parent.id : null;
+  db.prepare('UPDATE files SET deleted_at = NULL, folder_id = ? WHERE id = ?').run(folderId, file.id);
+  audit(req.user.id, 'restore', 'file', file.id);
+  return json(res, { ok: true, folderId, movedToRoot: Boolean(file.folder_id) && !parent });
+});
+app.delete('/api/files/:id/permanent', requireUser, async (req, res) => {
+  const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ?').get(req.params.id, req.user.id);
+  if (!file) return res.status(404).end();
   let warning = null;
   try {
-    const result = await deleteFromProvider(file, provider);
+    const result = await purgeFileRecord(file);
     if (result?.unrecoverable && result.reason) warning = result.reason;
   } catch (error) {
-    return json(res, { error: `File masih ada di ${provider?.kind || 'provider'}, gagal dihapus: ${error.message}` }, 502);
+    // File masih ada di provider: record tetap disimpan supaya user bisa mencoba lagi.
+    return json(res, { error: `File masih ada di ${file.provider}, gagal dihapus permanen: ${error.message}` }, 502);
   }
-  db.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').run(now(), file.id);
-  db.prepare('UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?').run(file.size, file.provider);
-  if (file.remote_file_id) fs.rmSync(path.join(storageDir, file.remote_file_id), { force: true });
-  audit(req.user.id, 'delete', 'file', file.id);
+  audit(req.user.id, 'delete_permanent', 'file', file.id);
   if (warning) return json(res, { ok: true, warning }, 200);
   return res.status(204).end();
 });
@@ -514,7 +718,7 @@ app.get('/s/:token/download', async (req, res) => {
   try { return await sendRemoteFile(res, share, provider, 'attachment'); }
   catch { if (res.headersSent) return res.end(); return res.status(502).end(); }
 });
-app.get('/cdn/:slug', async (req, res) => { const file = db.prepare("SELECT * FROM files WHERE cdn_slug = ? AND cdn_enabled = 1 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.params.slug, now()); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return res.status(404).end(); res.setHeader('Cache-Control', 'public, max-age=86400, immutable'); try { return await sendRemoteFile(res, file, provider); } catch { if (res.headersSent) return res.end(); return res.status(502).end(); } });
+app.get('/cdn/:slug', async (req, res) => { const file = db.prepare("SELECT * FROM files WHERE cdn_slug = ? AND cdn_enabled = 1 AND encrypted = 0 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.params.slug, now()); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return res.status(404).end(); res.setHeader('Cache-Control', 'public, max-age=86400, immutable'); try { return await sendRemoteFile(res, file, provider); } catch { if (res.headersSent) return res.end(); return res.status(502).end(); } });
 
 app.get('/api/admin/overview', requireUser, ownerOnly, async (_req, res) => {
   const providers = await Promise.all(db.prepare("SELECT * FROM providers WHERE kind != 'local' ORDER BY name").all().map(providerStatusWithCapacity));

@@ -68,6 +68,7 @@ NODE_ENV=production
 PORT=3000
 STORAGE_CONFIG_KEY=ganti-dengan-secret-acak-minimal-32-karakter
 MAX_FILE_SIZE=5368709120
+TRASH_RETENTION_DAYS=30
 ```
 
 Generate secret:
@@ -76,7 +77,7 @@ Generate secret:
 openssl rand -base64 48
 ```
 
-`STORAGE_CONFIG_KEY` wajib stabil. Jika berubah, credential provider yang tersimpan terenkripsi tidak bisa didekripsi lagi.
+`STORAGE_CONFIG_KEY` wajib stabil. Jika berubah, credential provider yang tersimpan terenkripsi tidak bisa didekripsi lagi. `TRASH_RETENTION_DAYS` mengatur berapa hari item di Sampah disimpan sebelum dibersihkan otomatis (default 30); nilai `0` membuat item dibersihkan begitu menu Sampah dibuka.
 Semua variabel di atas sudah tersedia di `.env.example`. `setup.sh` menyalinnya menjadi `.env` dan mengisi `STORAGE_CONFIG_KEY` otomatis dengan hasil `openssl rand -base64 48`; `ecosystem.config.cjs` ikut disuntik nilai yang sama supaya PM2 memakai secret yang identik.
 
 Jangan menaruh token Telegram, password Mega, private key Google, atau API key di Git. Credential provider dimasukkan melalui panel Owner dan disimpan terenkripsi di SQLite.
@@ -215,6 +216,14 @@ Telegram tidak menyediakan angka total quota channel. Dashboard menghitung pengg
 - Masa simpan dapat dipilih `Selamanya`, `Hari`, atau `Bulan`.
 - File kedaluwarsa tidak ditampilkan di dashboard.
 - Preview tersedia untuk gambar, video, audio, PDF, teks, JSON, dan XML. Format lain tersedia melalui buka/download.
+
+### Sampah, pindah, dan CDN
+
+- Menghapus file/folder dari dashboard tidak langsung membuang datanya: item dipindahkan ke **Sampah** dan masih terhitung sebagai pemakaian provider sampai dihapus permanen, sama seperti Google Drive.
+- Folder yang dipindahkan ke Sampah membawa seluruh isinya. Saat dipulihkan, hanya isi yang terhapus bersamaan yang ikut kembali; item yang sebelumnya sudah di Sampah tetap tinggal di sana.
+- Sampah dibuka lewat menu **Sampah** di sidebar: tersedia tombol pulihkan dan hapus permanen per item, plus **Kosongkan Sampah**. Item yang lebih tua dari `TRASH_RETENTION_DAYS` dibersihkan otomatis saat menu ini dibuka.
+- Tombol **Pindahkan** di setiap kartu file/folder memindahkannya ke folder lain; pilihan `MyDrive (root)` mengeluarkan item dari semua folder. Folder tidak bisa dipindahkan ke dirinya sendiri atau ke turunannya.
+- Tombol **CDN** hanya muncul untuk gambar/video yang tidak dienkripsi dan dipakai untuk menyalakan atau mematikan link `/cdn/<slug>`. File terenkripsi tidak bisa dipakai sebagai CDN karena link CDN mengirim byte apa adanya.
 
 ## 9. Data dan Backup
 
