@@ -1,3 +1,7 @@
+// Konfigurasi PM2 untuk Gutok Drive.
+// Dipakai: pm2 start ecosystem.config.cjs / pm2 restart ecosystem.config.cjs --update-env
+// Script deploy (setup.sh, update-code.sh, deploy-bersih.sh) menyuntik nilai STORAGE_CONFIG_KEY
+// dari .env ke baris di bawah, jadi jangan ganti placeholder-nya dengan format lain.
 module.exports = {
   apps: [{
     name: 'gutok-drive',
@@ -8,13 +12,16 @@ module.exports = {
     env: {
       NODE_ENV: 'production',
       PORT: 3000,
-      // WAJIB isi manual dengan secret yang sama persis dengan yang dipakai saat setup pertama.
-      // Kalau value ini beda dari sebelumnya, semua config provider (token/password) yang sudah
-      // tersimpan terenkripsi di SQLite tidak akan bisa didekrip lagi.
+
+      // WAJIB sama persis dengan yang dipakai saat setup pertama. Kalau value ini beda,
+      // semua config provider (token/password) yang tersimpan terenkripsi di SQLite
+      // tidak akan bisa didekrip lagi.
       STORAGE_CONFIG_KEY: 'ganti-dengan-secret-acak-minimal-32-karakter',
+
       MAX_FILE_SIZE: 5368709120,
+
       // Masa simpan item di Sampah (hari) sebelum dibersihkan otomatis. Opsional, default 30.
-      TRASH_RETENTION_DAYS: 30
-    }
-  }]
+      TRASH_RETENTION_DAYS: 30,
+    },
+  }],
 };
