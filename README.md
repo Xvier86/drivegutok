@@ -1,0 +1,274 @@
+# Gutok Drive
+
+Cloud storage multi-provider berbasis Node.js, Express, dan SQLite. File dikirim ke provider remote yang dipilih Owner: Google Drive, Telegram Channel, atau Mega. VPS hanya menjalankan aplikasi, database metadata, dan file temporary saat proses upload.
+
+## 1. Prasyarat VPS
+
+- Ubuntu/Debian Linux.
+- Node.js 20 LTS atau lebih baru.
+- npm.
+- PM2 untuk proses production.
+- Domain yang sudah diarahkan ke IP VPS.
+- Nginx atau reverse proxy aaPanel.
+- Port internal aplikasi: `3000`.
+
+Periksa versi:
+
+```bash
+node --version
+npm --version
+```
+
+## 2. Upload Project ke VPS
+
+Contoh lokasi production:
+
+```bash
+sudo mkdir -p /var/www/gutok-drive
+sudo chown -R "$USER":"$USER" /var/www/gutok-drive
+cd /var/www/gutok-drive
+```
+
+Upload seluruh isi project ke folder tersebut menggunakan Git, SCP, SFTP, atau File Manager aaPanel. Jangan upload file rahasia ke repository publik.
+
+Source backend jangan diletakkan di folder web root yang dilayani Nginx secara langsung. Aplikasi hanya boleh diakses melalui reverse proxy ke port Node. Setelah upload, batasi permission:
+
+```bash
+cd /var/www/gutok-drive
+chmod 750 . server.js ecosystem.config.cjs
+chmod 640 package.json package-lock.json
+chmod 700 data storage
+```
+
+Enkripsi source code tidak dapat membuat Node tetap menjalankan aplikasi tanpa memiliki plaintext saat runtime. Perlindungan yang benar adalah repository private, user Linux khusus aplikasi, permission filesystem, firewall, HTTPS, dan tidak membuka port source ke publik. Frontend `assets/app.js` tetap dapat dilihat pengguna karena browser harus menerimanya.
+
+Jika menggunakan Git:
+sudo ln -s /etc/nginx/sites-available/gutokdrive.world /etc/nginx/sites-enabled/
+```bash
+git clone URL_REPOSITORY /var/www/gutok-drive
+cd /var/www/gutok-drive
+npm ci
+```
+
+Jika project dikirim sebagai arsip:
+
+```bash
+cd /var/www/gutok-drive
+npm install --omit=dev
+```
+
+## 3. Konfigurasi Environment
+
+Environment penting:
+
+```text
+NODE_ENV=production
+PORT=3000
+STORAGE_CONFIG_KEY=ganti-dengan-secret-acak-minimal-32-karakter
+MAX_FILE_SIZE=5368709120
+```
+
+Generate secret:
+
+```bash
+openssl rand -base64 48
+```
+
+`STORAGE_CONFIG_KEY` wajib stabil. Jika berubah, credential provider yang tersimpan terenkripsi tidak bisa didekripsi lagi.
+
+Jangan menaruh token Telegram, password Mega, private key Google, atau API key di Git. Credential provider dimasukkan melalui panel Owner dan disimpan terenkripsi di SQLite.
+
+## 4. Jalankan Pertama Kali
+
+```bash
+cd /var/www/gutok-drive
+npm ci
+NODE_ENV=production PORT=3000 STORAGE_CONFIG_KEY='SECRET_ANDA' npm start
+```
+
+Tes dari VPS:
+
+```bash
+curl -I http://127.0.0.1:3000/
+curl http://127.0.0.1:3000/api/setup
+```
+
+Buka domain atau `http://IP_VPS:3000`, lalu buat Owner pertama. Setelah Owner dibuat, akun berikutnya dibuat melalui menu invite Owner.
+
+## 5. Deploy dengan PM2
+
+```bash
+npm install --global pm2
+```
+
+Edit `ecosystem.config.cjs`:
+
+```js
+module.exports = {
+  apps: [{
+    name: 'gutok-drive',
+    script: './server.js',
+    instances: 1,
+    exec_mode: 'fork',
+    autorestart: true,
+    watch: false,
+    env: {
+      NODE_ENV: 'production',
+      PORT: 3000,
+      STORAGE_CONFIG_KEY: 'ganti-dengan-secret-acak',
+      MAX_FILE_SIZE: 5368709120
+    }
+  }]
+};
+```
+
+Jalankan:
+
+```bash
+cd /var/www/gutok-drive
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup
+```
+
+Jalankan perintah `sudo` yang dicetak oleh `pm2 startup`, lalu cek:
+
+```bash
+pm2 status
+pm2 logs gutok-drive --lines 100
+curl -I http://127.0.0.1:3000/
+```
+
+Restart setelah perubahan:
+
+```bash
+pm2 restart gutok-drive --update-env
+```
+
+Jalankan PM2 sebagai user aplikasi, bukan `root`. Batasi SSH, aktifkan firewall hanya untuk SSH/HTTP/HTTPS, dan jangan membuka port `3000` ke internet jika memakai Nginx.
+
+## 6. Reverse Proxy Nginx
+
+```nginx
+server {
+    listen 80;
+    server_name drive.example.com;
+
+    client_max_body_size 5G;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600;
+        proxy_send_timeout 3600;
+    }
+}
+```
+
+Aktifkan HTTPS menggunakan Certbot atau SSL aaPanel. Saat `NODE_ENV=production`, cookie session otomatis memakai flag `Secure`.
+
+## 7. Setup Provider melalui Dashboard
+
+Login sebagai Owner, buka `Owner control`, lalu konfigurasi provider.
+
+### Google Drive
+
+1. Buat service account di Google Cloud.
+2. Aktifkan Google Drive API.
+3. Buat Shared Drive dan folder tujuan.
+4. Tambahkan `client_email` service account sebagai `Content manager`.
+5. Tempel JSON service account dan URL atau ID folder pada panel.
+6. Aktifkan provider setelah verifikasi akses berhasil.
+
+Server membuat OAuth access token otomatis dari JSON service account. API key Google `AIza...` tidak digunakan untuk upload.
+
+### Telegram
+
+1. Buat bot melalui `@BotFather`.
+2. Tambahkan bot sebagai administrator channel.
+3. Berikan izin mengirim pesan/file.
+4. Masukkan bot token dan channel ID pada panel.
+5. Uji upload file kecil.
+
+Telegram tidak menyediakan angka total quota channel. Dashboard menghitung penggunaan file yang tercatat di aplikasi.
+
+### Mega
+
+1. Gunakan akun Mega khusus aplikasi.
+2. Masukkan email dan password Mega melalui panel Owner.
+3. Aktifkan provider.
+4. Uji upload file kecil.
+
+## 8. Fitur Upload
+
+- Owner dapat memilih provider upload.
+- User biasa memakai provider aktif secara otomatis.
+- Upload CDN hanya menerima gambar/video maksimal 5 MB.
+- File biasa dapat dienkripsi AES-256-CTR sebelum dikirim ke provider.
+- Masa simpan dapat dipilih `Selamanya`, `Hari`, atau `Bulan`.
+- File kedaluwarsa tidak ditampilkan di dashboard.
+- Preview tersedia untuk gambar, video, audio, PDF, teks, JSON, dan XML. Format lain tersedia melalui buka/download.
+
+## 9. Data dan Backup
+
+Data penting:
+
+- `data/mydrive.sqlite`: user, session, folder, metadata, dan konfigurasi provider terenkripsi.
+- `data/mydrive.sqlite-wal` dan `data/mydrive.sqlite-shm`: journal SQLite saat database aktif.
+- `data/tmp/`: file sementara upload; boleh dibersihkan saat tidak ada upload.
+- `storage/`: legacy/runtime directory. Provider remote tidak menyimpan file permanen di sini.
+
+Backup database secara konsisten:
+
+```bash
+pm2 stop gutok-drive
+tar -czf gutok-drive-backup-$(date +%F).tar.gz data/ ecosystem.config.cjs
+pm2 start gutok-drive
+```
+
+Simpan backup di server berbeda dan jangan menyertakan credential mentah di log atau repository.
+
+## 10. Troubleshooting
+
+### `Failed to fetch`
+
+```bash
+pm2 status
+pm2 logs gutok-drive --lines 100
+ss -ltnp | grep 3000
+curl -I http://127.0.0.1:3000/
+```
+
+Pastikan browser memakai domain/port yang sama dengan instance PM2. Jangan menjalankan beberapa `npm start` pada port yang sama.
+
+### Upload Google gagal
+
+- Pastikan folder dibagikan ke `client_email` service account.
+- Gunakan hak `Editor` atau `Content manager`.
+- Gunakan folder Shared Drive bila memakai service account.
+- Pastikan `STORAGE_CONFIG_KEY` tidak berubah.
+- Baca pesan API Google di dashboard dan `pm2 logs`.
+
+### Upload Telegram gagal
+
+- Bot harus benar-benar admin channel.
+- Chat ID channel biasanya berbentuk `-100...`.
+- Pastikan bot memiliki izin mengirim file.
+- Periksa token dan konfigurasi provider.
+
+### Port 3000 sudah dipakai
+
+```bash
+ss -ltnp | grep 3000
+pm2 status
+```
+
+Hentikan proses lama melalui PM2, atau ubah `PORT` di `ecosystem.config.cjs` dan reverse proxy secara bersamaan.
+
+## 11. Cloudflare Worker
+
+`wrangler.toml` dan `src/worker.js` adalah target deployment terpisah untuk Cloudflare Workers + D1 + KV. Deployment VPS menggunakan `server.js`, SQLite, dan PM2. Jangan mencampur database D1 dengan SQLite VPS tanpa migrasi metadata khusus.
