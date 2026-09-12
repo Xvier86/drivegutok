@@ -97,12 +97,43 @@ fi
 
 git fetch origin "$BRANCH"
 
+declare -A UNTRACKED_SALIN=()
+
+kembalikan_untracked() {
+  for berkas in "${!UNTRACKED_SALIN[@]}"; do
+    if [ -f "${UNTRACKED_SALIN[$berkas]}" ]; then
+      cp -p "${UNTRACKED_SALIN[$berkas]}" "$berkas"
+      rm -f "${UNTRACKED_SALIN[$berkas]}"
+      echo ">> $berkas dipulihkan ke working tree."
+    fi
+  done
+}
+
+# Juga tangani file yang belum dilacak Git di working tree tapi sudah ada di commit
+# tujuan (contoh: update-code.sh yang dulu ditambah setup.sh tapi belum pernah di-track).
+# Tanpa ini, git merge --ff-only menolak:
+#   "The following untracked working tree files would be overwritten by merge: update-code.sh"
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  [ -e "$f" ] && [ -z "$(git ls-files -- "$f")" ] || continue
+  SALIN=$(mktemp)
+  cp -p "$f" "$SALIN"
+  UNTRACKED_SALIN["$f"]="$SALIN"
+  rm -f "$f"
+  echo ">> $f ada di working tree tapi belum dilacak: disisihkan sementara supaya merge bisa jalan."
+done < <(git diff --name-only --diff-filter=A "HEAD..origin/$BRANCH" 2>/dev/null)
+
 if ! git merge --ff-only "origin/$BRANCH"; then
   echo "!! git merge --ff-only gagal (biasanya karena ada commit lokal di VPS)."
   echo "!! Kode tidak diubah. Secret disuntik ulang supaya ecosystem.config.cjs tetap benar."
   suntik_secret
+  kembalikan_untracked
   exit 1
 fi
+
+# File yang tadi disisihkan karena untracked sekarang sudah ada di repo (merge berhasil),
+# jadi tidak perlu dipulihkan — biarkan versi repo yang baru.
+for berkas in "${!UNTRACKED_SALIN[@]}"; do rm -f "${UNTRACKED_SALIN[$berkas]}"; done
 
 # Merge menimpa ecosystem.config.cjs dengan versi repo (secret balik ke placeholder), suntik ulang.
 suntik_secret
