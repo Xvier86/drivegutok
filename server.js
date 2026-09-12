@@ -128,6 +128,7 @@ function providerStatus(provider) {
 // menjawab akan menahan seluruh halaman. Dengan batas waktu di bawah, provider seperti itu
 // hanya tampil sebagai capacityError di UI (bukan bikin halaman kosong/error).
 const PROVIDER_TIMEOUT_MS = 8000;
+const PROVIDER_DELETE_TIMEOUT_MS = Number(process.env.PROVIDER_DELETE_TIMEOUT_MS || 20000);
 function batasWaktu(promise, label, ms = PROVIDER_TIMEOUT_MS) {
   return Promise.race([
     promise,
@@ -182,15 +183,30 @@ async function getGoogleAccessToken(config) {
   if (!response.ok || !result.access_token) throw new Error(result.error_description || `Google token API ${response.status}`);
   return result.access_token;
 }
-async function providerStatusWithCapacity(provider) {
-  try {
-    // Provider yang dinonaktifkan tidak dihubungi sama sekali: kalau akunnya bermasalah (misalnya
-    // akun Mega diblokir), memanggilnya hanya memperlambat /api/admin/overview tanpa manfaat.
-    // Angka terakhir yang tersimpan tetap ditampilkan supaya kartunya tidak kosong.
-    if (!Number(provider.enabled)) return { ...providerStatus(provider), used_bytes: provider.used_bytes, capacity_bytes: provider.capacity_bytes, capacitySource: 'disabled', capacityError: null };
-    const capacity = await readProviderCapacity(provider);
-    return { ...providerStatus(provider), used_bytes: capacity.usedBytes, capacity_bytes: capacity.capacityBytes, capacitySource: capacity.capacitySource, capacityError: capacity.capacityError || null };
-  } catch (error) { return { ...providerStatus(provider), used_bytes: provider.used_bytes, capacity_bytes: provider.capacity_bytes, capacitySource: 'error', capacityError: error.message }; }
+// Kuota provider dibaca dari jaringan (token Google, login Mega) dan itu butuh beberapa detik.
+// /api/admin/overview tidak lagi menunggunya: respons memakai nilai tersimpan, lalu kuota asli
+// diambil di latar belakang dan dipakai pada permintaan berikutnya. Hasil gagal pun disimpan
+// sementara supaya provider bermasalah tidak dipanggil ulang pada setiap pembukaan halaman.
+const CAPACITY_TTL_MS = Number(process.env.PROVIDER_CAPACITY_TTL_MS || 60000);
+const capacityCache = new Map();
+const capacityInFlight = new Set();
+function providerStatusForView(provider) {
+  // Provider yang dinonaktifkan tidak dihubungi sama sekali: kalau akunnya bermasalah (misalnya
+  // akun Mega diblokir), memanggilnya hanya memperlambat halaman tanpa manfaat.
+  if (!Number(provider.enabled)) return { ...providerStatus(provider), used_bytes: provider.used_bytes, capacity_bytes: provider.capacity_bytes, capacitySource: 'disabled', capacityError: null };
+  const cached = capacityCache.get(provider.id);
+  if (!cached) return { ...providerStatus(provider), used_bytes: provider.used_bytes, capacity_bytes: provider.capacity_bytes, capacitySource: 'tersimpan', capacityError: null };
+  return { ...providerStatus(provider), used_bytes: cached.usedBytes, capacity_bytes: cached.capacityBytes, capacitySource: cached.capacitySource, capacityError: cached.capacityError || null };
+}
+function refreshCapacityInBackground(provider) {
+  if (!Number(provider.enabled) || !providerStatus(provider).configured) return;
+  const cached = capacityCache.get(provider.id);
+  if (capacityInFlight.has(provider.id) || (cached && Date.now() - cached.at < CAPACITY_TTL_MS)) return;
+  capacityInFlight.add(provider.id);
+  readProviderCapacity(provider)
+    .then((capacity) => capacityCache.set(provider.id, { ...capacity, at: Date.now() }))
+    .catch((error) => capacityCache.set(provider.id, { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'error', capacityError: error.message, at: Date.now() }))
+    .finally(() => capacityInFlight.delete(provider.id));
 }
 async function uploadToTelegram(file, config, name, mimeType) {
   const form = new FormData();
@@ -265,7 +281,7 @@ async function deleteFromMega(remoteFileId, config) {
   const nodeId = remoteFileId.replace('mega:', '');
   const { Storage } = await import('megajs');
   const storage = new Storage({ email: config.email, password: config.password });
-  await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
+  await batasWaktu(new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); }), 'Mega');
   try {
     const node = storage.files?.[nodeId] || Object.values(storage.files || {}).find((entry) => entry.nodeId === nodeId);
     if (!node) return { skipped: true, reason: 'File tidak ditemukan di Mega, mungkin sudah terhapus sebelumnya.' };
@@ -434,7 +450,9 @@ function resolveTargetFolder(ownerId, rawValue) {
 // Hapus permanen satu file: dari provider remote sekaligus dari database.
 async function purgeFileRecord(file) {
   const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider);
-  const result = await deleteFromProvider(file, provider);
+  // Penghapusan remote bisa menggantung kalau provider bermasalah (akun Mega diblokir, jaringan
+  // mati). Tanpa batas waktu, satu file seperti itu menahan seluruh proses pembersihan Sampah.
+  const result = await batasWaktu(deleteFromProvider(file, provider), 'Provider', PROVIDER_DELETE_TIMEOUT_MS);
   db.prepare('UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?').run(file.size, file.provider);
   if (file.remote_file_id) fs.rmSync(path.join(storageDir, file.remote_file_id), { force: true });
   db.prepare('DELETE FROM shares WHERE file_id = ?').run(file.id);
@@ -467,13 +485,25 @@ async function emptyTrashFor(ownerId) {
   return { deletedFiles, deletedFolders: folders.changes, failures };
 }
 // Item di Sampah yang sudah lewat masa simpan dibersihkan otomatis tanpa aksi user.
+// Satu putaran tidak mengerjakan seluruh isi Sampah: pembersihan butuh jaringan provider, dan
+// sisanya dikerjakan pada putaran berikutnya.
+const PURGE_BATCH = Number(process.env.TRASH_PURGE_BATCH || 25);
+const purgeInFlight = new Set();
 async function purgeExpiredTrash(ownerId) {
   const cutoff = new Date(Date.now() - trashRetentionDays * 86400000).toISOString();
-  const stale = db.prepare('SELECT * FROM files WHERE owner_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?').all(ownerId, cutoff);
+  const stale = db.prepare('SELECT * FROM files WHERE owner_id = ? AND deleted_at IS NOT NULL AND deleted_at < ? LIMIT ?').all(ownerId, cutoff, PURGE_BATCH);
   for (const file of stale) {
     try { await purgeFileRecord(file); } catch { /* provider sedang bermasalah: dicoba lagi saat sampah dibuka berikutnya */ }
   }
   db.prepare('DELETE FROM folders WHERE owner_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?').run(ownerId, cutoff);
+}
+// Sebelumnya GET /api/trash menunggu purgeExpiredTrash selesai. Padahal hapus permanen menghubungi
+// provider (Mega/Google) yang bisa menggantung lama, sehingga halaman Sampah tidak pernah terbuka.
+// Sekarang daftar Sampah dikirim lebih dulu dan pembersihan berjalan di latar belakang.
+function purgeExpiredTrashInBackground(ownerId) {
+  if (purgeInFlight.has(ownerId)) return;
+  purgeInFlight.add(ownerId);
+  purgeExpiredTrash(ownerId).catch(() => {}).finally(() => purgeInFlight.delete(ownerId));
 }
 
 app.get('/api/setup', (_req, res) => json(res, { needsSetup: db.prepare('SELECT COUNT(*) AS count FROM users').get().count === 0 }));
@@ -583,8 +613,8 @@ app.delete('/api/folders/:id/permanent', requireUser, async (req, res) => {
   if (result.failures.length) return json(res, { ok: true, warning: `Folder belum dihapus permanen: ${result.failures.length} file gagal dihapus dari provider. Coba lagi setelah masalah provider beres.`, failures: result.failures }, 207);
   return res.status(204).end();
 });
-app.get('/api/trash', requireUser, async (req, res) => {
-  await purgeExpiredTrash(req.user.id);
+app.get('/api/trash', requireUser, (req, res) => {
+  purgeExpiredTrashInBackground(req.user.id);
   const files = db.prepare('SELECT id, name, mime_type, size, provider, folder_id, encrypted, deleted_at FROM files WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC').all(req.user.id);
   const folders = db.prepare('SELECT id, name, parent_id, deleted_at FROM folders WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC').all(req.user.id);
   const trashedFolderIds = new Set(folders.map((folder) => folder.id));
@@ -749,9 +779,12 @@ app.get('/s/:token/download', async (req, res) => {
 });
 app.get('/cdn/:slug', async (req, res) => { const file = db.prepare("SELECT * FROM files WHERE cdn_slug = ? AND cdn_enabled = 1 AND encrypted = 0 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.params.slug, now()); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return res.status(404).end(); res.setHeader('Cache-Control', 'public, max-age=86400, immutable'); try { return await sendRemoteFile(res, file, provider); } catch { if (res.headersSent) return res.end(); return res.status(502).end(); } });
 
-app.get('/api/admin/overview', requireUser, ownerOnly, async (_req, res) => {
-  const providers = await Promise.all(db.prepare("SELECT * FROM providers WHERE kind != 'local' ORDER BY name").all().map(providerStatusWithCapacity));
-  return json(res, { users: db.prepare('SELECT id, email, username, role, status, created_at FROM users ORDER BY created_at DESC').all(), files: db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM files WHERE deleted_at IS NULL').get(), providers, logs: db.prepare('SELECT audit_logs.*, users.username FROM audit_logs JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 8').all() });
+app.get('/api/admin/overview', requireUser, ownerOnly, (_req, res) => {
+  const providers = db.prepare("SELECT * FROM providers WHERE kind != 'local' ORDER BY name").all();
+  // Kuota asli diambil di latar belakang; respons memakai angka yang sudah tersimpan supaya
+  // halaman Owner control terbuka seketika walau provider sedang lambat/tidak merespons.
+  for (const provider of providers) refreshCapacityInBackground(provider);
+  return json(res, { users: db.prepare('SELECT id, email, username, role, status, created_at FROM users ORDER BY created_at DESC').all(), files: db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM files WHERE deleted_at IS NULL').get(), providers: providers.map(providerStatusForView), logs: db.prepare('SELECT audit_logs.*, users.username FROM audit_logs JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 8').all() });
 });
 app.post('/api/admin/users', requireUser, ownerOnly, (req, res) => { const { email, username, password } = req.body; if (!email || !username || !password || password.length < 8) return json(res, { error: 'Data invite belum lengkap.' }, 400); const user = { id: id(), email: email.trim().toLowerCase(), username: username.trim(), role: 'user', status: 'active', created_at: now() }; try { db.prepare('INSERT INTO users (id, email, username, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(user.id, user.email, user.username, hash(password), user.role, user.status, user.created_at); audit(req.user.id, 'invite', 'user', user.id); return json(res, user, 201); } catch { return json(res, { error: 'Email atau username sudah digunakan.' }, 409); } });
 app.post('/api/admin/providers', requireUser, ownerOnly, (req, res) => {
