@@ -31,6 +31,57 @@ if ! git diff --quiet -- ecosystem.config.cjs; then
   git checkout -- ecosystem.config.cjs
 fi
 
+# Rilis lama sempat ikut melacak file runtime SQLite (data/mydrive.sqlite, -shm, -wal). Selama
+# masih dilacak, isinya berubah setiap aplikasi berjalan, sehingga `git merge --ff-only` selalu
+# ditolak: "Your local changes to the following files would be overwritten by merge".
+# Rilis terbaru berhenti melacaknya, tetapi perubahan itu berupa PENGHAPUSAN — kalau isi file
+# dibiarkan apa adanya, merge gagal; kalau git yang menghapus, database produksi ikut lenyap.
+# Jadi: isi aslinya disalin dulu, file di working tree dikembalikan ke versi repo (hanya supaya
+# merge bisa jalan), lalu isi asli dipulihkan lagi oleh kembalikan_runtime() sebelum script
+# selesai. Aplikasi wajib dalam keadaan berhenti (deploy.sh sudah mematikan PM2 lebih dulu).
+RUNTIME_FILES=()
+mapfile -t RUNTIME_FILES < <(git ls-files -- 'data/*.sqlite' 'data/*.sqlite-wal' 'data/*.sqlite-shm')
+RUNTIME_SIMPAN=""
+if [ "${#RUNTIME_FILES[@]}" -gt 0 ]; then
+  RUNTIME_SIMPAN=$(mktemp -d)
+  for berkas in "${RUNTIME_FILES[@]}"; do
+    if [ -e "$berkas" ]; then
+      mkdir -p "$RUNTIME_SIMPAN/$(dirname "$berkas")"
+      if ! cp -p "$berkas" "$RUNTIME_SIMPAN/$berkas"; then
+        echo "!! Gagal menyisihkan $berkas. Deploy dibatalkan supaya database tidak hilang."
+        exit 1
+      fi
+      git update-index --no-assume-unchanged "$berkas" 2>/dev/null || true
+      git update-index --no-skip-worktree "$berkas" 2>/dev/null || true
+      git checkout -- "$berkas" 2>/dev/null || true
+      echo ">> $berkas masih dilacak rilis lama: isi aslinya disisihkan, file di working tree dibuat"
+      echo ">>   versi repo supaya merge bisa jalan, lalu isinya dipulihkan lagi setelah merge."
+    fi
+  done
+fi
+
+kembalikan_runtime() {
+  if [ -z "$RUNTIME_SIMPAN" ]; then
+    return 0
+  fi
+  gagal_pulih=0
+  for berkas in "${RUNTIME_FILES[@]}"; do
+    if [ -e "$RUNTIME_SIMPAN/$berkas" ] && { [ ! -e "$berkas" ] || ! cmp -s "$berkas" "$RUNTIME_SIMPAN/$berkas"; }; then
+      if cp -p "$RUNTIME_SIMPAN/$berkas" "$berkas"; then
+        echo ">> $berkas dipulihkan dari salinan sementara (merge ingin menghapusnya)."
+      else
+        echo "!! Gagal memulihkan $berkas; salinan aslinya masih ada di $RUNTIME_SIMPAN."
+        gagal_pulih=1
+      fi
+    fi
+  done
+  if [ "$gagal_pulih" -eq 0 ]; then
+    rm -rf "$RUNTIME_SIMPAN"
+  fi
+  return 0
+}
+trap kembalikan_runtime EXIT
+
 suntik_secret() {
   if [ -z "$SECRET" ]; then
     return 0

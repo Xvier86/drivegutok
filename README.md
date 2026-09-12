@@ -304,7 +304,7 @@ cd /var/www/gutok-drive && git log --oneline -1 && git status --short
 
 `deploy.sh` memanggil `update-code.sh` untuk urusan Git, lalu `npm ci --omit=dev`, `pm2 restart ecosystem.config.cjs --update-env`, `pm2 save`, dan terakhir menunggu `http://127.0.0.1:3000/api/setup` merespons. Script keluar dengan status gagal kalau aplikasi tidak hidup, jadi log PM2 yang ikut ditampilkan bisa langsung diperiksa. Kalau ada langkah yang gagal — misalnya `git merge --ff-only` ditolak karena VPS punya commit lokal — `deploy.sh` menyalakan ulang aplikasi dengan kode yang ada sekarang, mencetak lokasi backup, lalu menyuruh menjalankan ulang, sehingga deploy yang gagal tidak pernah berakhir dengan situs mati. Folder `data/`, `storage/`, dan `data/tmp/` dibuat lebih dulu sebelum backup karena `tar` gagal kalau `data/` belum ada.
 
-`update-code.sh` perlu ada karena `setup.sh` menyuntik `STORAGE_CONFIG_KEY` asli ke `ecosystem.config.cjs`, padahal file itu dilacak Git. Tanpa script itu `git pull` ditolak dengan `Your local changes to the following files would be overwritten by merge`. Sekarang nilai secret diamankan lebih dulu (dari `.env`, cadangannya dari file itu sendiri), file dikembalikan ke versi repo, kode ditarik dengan `git merge --ff-only`, lalu secret disuntik ulang. Kalau `git merge --ff-only` gagal (misalnya VPS punya commit lokal sendiri), script berhenti dengan error tanpa mengubah kode, dan `ecosystem.config.cjs` tetap disuntik secret yang benar supaya restart manual tidak merusak kredensial provider. `redeploy.sh` adalah versi ringkas tanpa backup untuk VPS yang projectnya ada di `~/drivegutok` dan memakai `update-code.sh` yang sama.
+`update-code.sh` perlu ada karena `setup.sh` menyuntik `STORAGE_CONFIG_KEY` asli ke `ecosystem.config.cjs`, padahal file itu dilacak Git. Tanpa script itu `git pull` ditolak dengan `Your local changes to the following files would be overwritten by merge`. Sekarang nilai secret diamankan lebih dulu (dari `.env`, cadangannya dari file itu sendiri), file dikembalikan ke versi repo, kode ditarik dengan `git merge --ff-only`, lalu secret disuntik ulang. Kalau `git merge --ff-only` gagal (misalnya VPS punya commit lokal sendiri), script berhenti dengan error tanpa mengubah kode, dan `ecosystem.config.cjs` tetap disuntik secret yang benar supaya restart manual tidak merusak kredensial provider. Perlakuan yang sama diberikan pada file runtime SQLite (`data/mydrive.sqlite*`) yang masih dilacak rilis lama: isinya disisihkan dan dipulihkan kembali, karena rilis terbaru menghapus file itu dari Git dan tanpa penanganan ini database produksi ikut terhapus. `redeploy.sh` adalah versi ringkas tanpa backup untuk VPS yang projectnya ada di `~/drivegutok` dan memakai `update-code.sh` yang sama.
 
 Sekali saja, kalau VPS kamu masih memakai `deploy.sh` versi lama (yang belum memanggil `update-code.sh`), jalankan langkah berikut untuk sampai ke versi terbaru:
 
@@ -340,6 +340,40 @@ Gejalanya: `git pull` sudah dijalankan, tapi UI masih versi lama (tombol ganti n
 4. **Satu provider menahan seluruh halaman.** `/api/admin/overview` memanggil semua provider sekaligus; sekarang setiap pembacaan kapasitas dibatasi 8 detik (`PROVIDER_TIMEOUT_MS`), jadi provider yang tidak menjawab hanya muncul sebagai pesan error di kartunya, bukan membuat halaman kosong. Provider yang kamu **Nonaktifkan** tidak dihubungi sama sekali, jadi mematikan provider bermasalah membuat dashboard kembali instan.
 
 Mengubah `TRASH_RETENTION_DAYS` (masa simpan item di Sampah) dilakukan di `ecosystem.config.cjs` karena PM2 tidak membaca `.env`, lalu jalankan `pm2 restart ecosystem.config.cjs --update-env`. Skema database tidak perlu migrasi manual: `server.js` membuat tabel dan menambah kolom yang kurang saat aplikasi start.
+
+### Deploy berhenti karena `data/mydrive.sqlite-wal` (merge ditolak)
+
+Gejalanya: `bash deploy.sh` berhenti dengan
+
+```
+error: Your local changes to the following files would be overwritten by merge:
+        data/mydrive.sqlite
+        data/mydrive.sqlite-shm
+        data/mydrive.sqlite-wal
+```
+
+Rilis lama ikut melacak file runtime SQLite. Selama masih dilacak, isinya berubah setiap aplikasi berjalan, jadi `git merge --ff-only` selalu ditolak dan kode di VPS tetap versi lama (efek lanjutannya: fitur baru tidak muncul, lihat bagian sebelumnya). Rilis terbaru sudah berhenti melacaknya dan `.gitignore` menutup folder `data/`, tetapi perubahannya berupa **penghapusan file** — kalau fetch/merge dipaksa dengan `git reset --hard` atau `git clean`, database produksi bisa ikut hilang. Karena itu `update-code.sh` sekarang menangani khusus file ini: isinya disalin ke folder sementara, file di working tree dikembalikan ke versi repo (hanya supaya merge bisa jalan), merge dijalankan, lalu isi aslinya dipulihkan sebelum script selesai — juga saat deploy gagal. Aplikasi wajib berhenti selama langkah itu, dan `deploy.sh`/`redeploy.sh` sudah mematikan PM2 lebih dulu.
+
+Yang perlu kamu lakukan hanya memakai script terbaru:
+
+```bash
+cd ~/drivegutok && git pull origin main   # ambil update-code.sh terbaru
+bash ~/drivegutok/deploy.sh               # isi data/ otomatis diselamatkan
+cd /var/www/gutok-drive && git log --oneline -1   # sudah commit terbaru?
+```
+
+Kalau `update-code.sh` di VPS masih versi lama, lakukan urutan manual ini (aplikasi dalam keadaan berhenti dulu: `pm2 stop gutok-drive`):
+
+```bash
+cd /var/www/gutok-drive
+mkdir -p ~/cadangan-db && cp -p data/mydrive.sqlite* ~/cadangan-db/   # 1. amankan isi database
+git checkout -- data/mydrive.sqlite data/mydrive.sqlite-wal data/mydrive.sqlite-shm
+cp ~/drivegutok/update-code.sh . && bash deploy.sh                    # 2. tarik kode terbaru
+cp -p ~/cadangan-db/mydrive.sqlite* data/                             # 3. pulihkan isi database
+pm2 restart ecosystem.config.cjs --update-env && pm2 save             # 4. nyalakan ulang
+```
+
+Setelah kode terbaru terpasang sekali, `data/` tidak lagi dilacak Git sehingga kejadian ini tidak terulang. Isi `data/` juga selalu ikut dibackup oleh `deploy.sh` sebelum kode ditarik (`gutok-drive-backup-*.tar.gz`).
 
 ### Deploy ulang dari nol (VPS baru atau folder project hilang)
 
