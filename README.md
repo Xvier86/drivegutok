@@ -290,7 +290,17 @@ Aplikasi hanya punya satu target deployment: VPS (`server.js` + SQLite + PM2). T
 ```bash
 cd /var/www/gutok-drive
 bash deploy.sh
+
+# boleh juga dari folder mana pun, misalnya: bash ~/drivegutok/deploy.sh
 ```
+
+**Penting:** yang di-update adalah folder aplikasi (`APP_DIR`, default `/var/www/gutok-drive`). Melakukan `git pull` di `~/drivegutok` (klon kedua di VPS) **tidak** mengubah aplikasi yang berjalan. Kalau setelah `git pull` fitur baru tetap tidak muncul, periksa commit di folder aplikasi:
+
+```bash
+cd /var/www/gutok-drive && git log --oneline -1 && git status --short
+```
+
+`update-code.sh` dicari di `APP_DIR` dulu; kalau belum ada di sana (deployment yang belum pernah menarik commit ini), dipakai yang ada di folder tempat `deploy.sh` berada. Jadi `bash ~/drivegutok/deploy.sh` tetap bisa menyelesaikan deploy pertama ke `/var/www/gutok-drive` tanpa langkah manual. Kalau tidak ditemukan di keduanya, `deploy.sh` berhenti **sebelum** `pm2 stop` — aplikasi tidak ikut mati.
 
 `deploy.sh` memanggil `update-code.sh` untuk urusan Git, lalu `npm ci --omit=dev`, `pm2 restart ecosystem.config.cjs --update-env`, `pm2 save`, dan terakhir menunggu `http://127.0.0.1:3000/api/setup` merespons. Script keluar dengan status gagal kalau aplikasi tidak hidup, jadi log PM2 yang ikut ditampilkan bisa langsung diperiksa. Kalau ada langkah yang gagal — misalnya `git merge --ff-only` ditolak karena VPS punya commit lokal — `deploy.sh` menyalakan ulang aplikasi dengan kode yang ada sekarang, mencetak lokasi backup, lalu menyuruh menjalankan ulang, sehingga deploy yang gagal tidak pernah berakhir dengan situs mati. Folder `data/`, `storage/`, dan `data/tmp/` dibuat lebih dulu sebelum backup karena `tar` gagal kalau `data/` belum ada.
 
@@ -311,6 +321,23 @@ pm2 save
 ```
 
 Setelah itu `bash deploy.sh` sudah aman dipakai berulang kali tanpa langkah manual.
+
+### Fitur baru tidak muncul atau Owner control error
+
+Gejalanya: `git pull` sudah dijalankan, tapi UI masih versi lama (tombol ganti nama/hapus folder tidak ada), atau halaman **Owner control** gagal terbuka. Hampir selalu penyebabnya salah satu dari ini:
+
+1. **Pull dilakukan di folder yang salah.** Aplikasi dilayani dari `APP_DIR` (default `/var/www/gutok-drive`), bukan dari `~/drivegutok`. Pastikan commit di folder aplikasi sudah terbaru:
+   ```bash
+   cd /var/www/gutok-drive && git log --oneline -1
+   ```
+   Kalau masih commit lama dan `update-code.sh` belum ada di folder itu, lakukan sekali:
+   ```bash
+   cp ~/drivegutok/update-code.sh /var/www/gutok-drive/
+   cd /var/www/gutok-drive && bash deploy.sh
+   ```
+2. **Browser memakai `app.js` dari cache.** Nginx/Express menyajikan aset statis dengan ETag; setelah deploy, lakukan hard reload (Ctrl+Shift+R).
+3. **Proses aplikasi sedang restart berulang (crash loop).** Cek `pm2 status` — angka kolom `↺` yang terus naik berarti aplikasi dimatikan oleh error, bukan oleh provider yang lambat. Sejak commit terbaru `server.js` menahan `unhandledRejection`/`uncaughtException` dan mencatatnya sebagai `[unhandledRejection] aplikasi tetap berjalan: ...`, jadi kasus provider bermasalah (mis. Mega diblokir) tidak lagi mematikan situs. Kalau kamu masih melihat log lama tanpa awalan itu, kode di VPS belum terbaru — kembali ke langkah 1.
+4. **Satu provider menahan seluruh halaman.** `/api/admin/overview` memanggil semua provider sekaligus; sekarang setiap pembacaan kapasitas dibatasi 8 detik (`PROVIDER_TIMEOUT_MS`), jadi provider yang tidak menjawab hanya muncul sebagai pesan error di kartunya, bukan membuat halaman kosong. Provider yang kamu **Nonaktifkan** tidak dihubungi sama sekali, jadi mematikan provider bermasalah membuat dashboard kembali instan.
 
 Mengubah `TRASH_RETENTION_DAYS` (masa simpan item di Sampah) dilakukan di `ecosystem.config.cjs` karena PM2 tidak membaca `.env`, lalu jalankan `pm2 restart ecosystem.config.cjs --update-env`. Skema database tidak perlu migrasi manual: `server.js` membuat tabel dan menambah kolom yang kurang saat aplikasi start.
 
@@ -367,3 +394,17 @@ Lanjutkan dari browser: login, upload file kecil, buka menu **Sampah**, dan uji 
 Kalau `pm2 restart ecosystem.config.cjs --update-env` terasa tidak memuat env baru, paksa dengan `pm2 delete gutok-drive && pm2 start ecosystem.config.cjs && pm2 save`.
 
 Sesuaikan `APP_DIR` di `deploy.sh` maupun `setup.sh` kalau lokasi project bukan `/var/www/gutok-drive`.
+
+### Akun Mega diblokir (`Error: EBLOCKED (-16): User blocked`)
+
+Pesan ini datang dari Mega, bukan dari aplikasi: akun Mega yang dipakai provider sedang dibatasi Mega (biasanya karena aktivitas mencurigakan, login dari banyak IP, atau verifikasi yang belum selesai). Sejak commit terbaru aplikasi tidak mati karena ini — provider itu hanya gagal dipakai, dan penyebabnya tampil sebagai `capacityError` di kartu provider.
+
+- Kalau Mega tidak dipakai lagi: buka **Owner control** → **Nonaktifkan** pada Mega Drive supaya dashboard tidak lagi menanyakan kapasitasnya.
+- Kalau masih dipakai: login ke mega.nz dengan akun itu, selesaikan verifikasi/unblock, atau pindah ke akun lain lewat **Ubah konfigurasi**. File yang sudah diunggah tetap ada di akun lama selama akunnya belum pulih.
+
+```bash
+pm2 status
+pm2 logs gutok-drive --lines 50 --nostream | grep -iE 'EBLOCKED|unhandledRejection'
+```
+
+Kalau kolom `↺` di `pm2 status` terus bertambah dan log masih menampilkan `EBLOCKED` tanpa awalan `[unhandledRejection]`, kode di VPS belum memuat perbaikan crash loop — ulangi deploy (lihat bagian "Fitur baru tidak muncul atau Owner control error").

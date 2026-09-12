@@ -8,6 +8,17 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
+// Selamatkan proses dari promise yang reject tanpa catch. Contoh nyata: megajs membuat promise
+// internal yang reject saat akun Mega diblokir (`Error: EBLOCKED (-16): User blocked`). Node 20
+// mematikan proses pada unhandled rejection, jadi tanpa handler ini PM2 me-restart aplikasi
+// berulang kali (crash loop) hanya karena satu provider bermasalah.
+process.on('unhandledRejection', (reason) => {
+  console.error(`[unhandledRejection] aplikasi tetap berjalan: ${reason?.stack || reason?.message || reason}`);
+});
+process.on('uncaughtException', (error) => {
+  console.error(`[uncaughtException] aplikasi tetap berjalan: ${error?.stack || error}`);
+});
+
 const root = path.dirname(fileURLToPath(import.meta.url));
 const startedAt = Date.now();
 const dataDir = path.join(root, 'data');
@@ -112,6 +123,20 @@ function providerStatus(provider) {
   const { config_json: _config, ...safeProvider } = provider;
   return { ...safeProvider, configured: missing.length === 0, missing };
 }
+// Provider yang lambat atau akunnya diblokir tidak boleh membuat dashboard Owner control
+// menggantung: /api/admin/overview memakai Promise.all, jadi satu provider yang tidak pernah
+// menjawab akan menahan seluruh halaman. Dengan batas waktu di bawah, provider seperti itu
+// hanya tampil sebagai capacityError di UI (bukan bikin halaman kosong/error).
+const PROVIDER_TIMEOUT_MS = 8000;
+function batasWaktu(promise, label, ms = PROVIDER_TIMEOUT_MS) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} tidak merespons dalam ${Math.round(ms / 1000)} detik.`)), ms);
+      timer.unref?.();
+    }),
+  ]);
+}
 async function readProviderCapacity(provider) {
   const status = providerStatus(provider);
   if (!status.configured) return { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'not-configured', capacityError: `Missing: ${status.missing.join(', ')}` };
@@ -123,7 +148,7 @@ async function readProviderCapacity(provider) {
   }
   if (provider.kind === 'gdrive') {
     const accessToken = await getGoogleAccessToken(config);
-    const response = await fetch('https://www.googleapis.com/drive/v3/about?fields=storageQuota', { headers: { Authorization: `Bearer ${accessToken}` } });
+    const response = await fetch('https://www.googleapis.com/drive/v3/about?fields=storageQuota', { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
     if (!response.ok) return { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'error', capacityError: `Google Drive API ${response.status}` };
     const quota = (await response.json()).storageQuota || {};
     return { usedBytes: Number(quota.usage || 0), capacityBytes: Number(quota.limit || 0), capacitySource: 'google-drive' };
@@ -132,10 +157,10 @@ async function readProviderCapacity(provider) {
     const { Storage } = await import('megajs');
     const storage = new Storage({ email: config.email, password: config.password });
     try {
-      await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
+      await batasWaktu(new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); }), 'Mega');
       // megajs tidak menyediakan properti storage.usedSpace / storage.capacity, jadi angka
       // kuota diambil dari getAccountInfo() -> { spaceUsed, spaceTotal }.
-      const account = await storage.getAccountInfo();
+      const account = await batasWaktu(storage.getAccountInfo(), 'Mega');
       return { usedBytes: Number(account.spaceUsed || 0), capacityBytes: Number(account.spaceTotal || 0), capacitySource: 'mega' };
     } finally { storage.close?.(); }
   }
@@ -159,6 +184,10 @@ async function getGoogleAccessToken(config) {
 }
 async function providerStatusWithCapacity(provider) {
   try {
+    // Provider yang dinonaktifkan tidak dihubungi sama sekali: kalau akunnya bermasalah (misalnya
+    // akun Mega diblokir), memanggilnya hanya memperlambat /api/admin/overview tanpa manfaat.
+    // Angka terakhir yang tersimpan tetap ditampilkan supaya kartunya tidak kosong.
+    if (!Number(provider.enabled)) return { ...providerStatus(provider), used_bytes: provider.used_bytes, capacity_bytes: provider.capacity_bytes, capacitySource: 'disabled', capacityError: null };
     const capacity = await readProviderCapacity(provider);
     return { ...providerStatus(provider), used_bytes: capacity.usedBytes, capacity_bytes: capacity.capacityBytes, capacitySource: capacity.capacitySource, capacityError: capacity.capacityError || null };
   } catch (error) { return { ...providerStatus(provider), used_bytes: provider.used_bytes, capacity_bytes: provider.capacity_bytes, capacitySource: 'error', capacityError: error.message }; }

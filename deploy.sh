@@ -5,11 +5,32 @@ APP_DIR="${APP_DIR:-/var/www/gutok-drive}"   # samain dengan setup.sh
 BRANCH="${BRANCH:-main}"
 PORT="${PORT:-3000}"
 BACKUP=""
+APP_DIHENTIKAN=0
+
+# update-code.sh dicari di APP_DIR; kalau belum ada (deployment yang belum pernah menarik commit
+# ini), dipakai yang ada di folder script. Jadi `bash ~/drivegutok/deploy.sh` tetap bisa
+# menyelesaikan deploy pertama ke /var/www/gutok-drive tanpa langkah manual.
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UPDATE_CODE=""
+for kandidat in "$APP_DIR/update-code.sh" "$SELF_DIR/update-code.sh"; do
+  if [ -f "$kandidat" ]; then UPDATE_CODE="$kandidat"; break; fi
+done
+
+if [ -z "$UPDATE_CODE" ]; then
+  echo "!! update-code.sh tidak ditemukan di $APP_DIR maupun $SELF_DIR."
+  echo "!! Deploy pertama setelah setup masih perlu langkah manual: lihat README bagian 11."
+  exit 1
+fi
+
+if [ ! -d "$APP_DIR" ]; then
+  echo "!! Folder aplikasi $APP_DIR tidak ada. Pakai setup.sh dulu, atau set APP_DIR=... sesuai lokasi project."
+  exit 1
+fi
 
 # Kalau ada langkah yang gagal setelah aplikasi dihentikan, jangan tinggalkan situs mati.
 bersihkan() {
   status=$?
-  if [ "$status" -ne 0 ]; then
+  if [ "$status" -ne 0 ] && [ "$APP_DIHENTIKAN" -eq 1 ]; then
     echo "!! Deploy gagal (exit $status)."
     echo "!! Menyalakan ulang aplikasi supaya situs tidak ikut mati..."
     pm2 restart ecosystem.config.cjs --update-env || pm2 start ecosystem.config.cjs || true
@@ -27,6 +48,7 @@ trap bersihkan EXIT
 cd "$APP_DIR"
 
 pm2 stop gutok-drive || true
+APP_DIHENTIKAN=1
 
 # Backup dulu: data/ berisi kredensial provider terenkripsi, .env berisi STORAGE_CONFIG_KEY.
 mkdir -p data storage data/tmp   # tar gagal (exit 2) kalau data/ belum ada
@@ -38,7 +60,7 @@ tar -czf "$BACKUP" "${BACKUP_ITEMS[@]}"
 echo ">> Backup dibuat: $APP_DIR/$BACKUP"
 
 # Tarik kode terbaru. Secret STORAGE_CONFIG_KEY di ecosystem.config.cjs otomatis diamankan.
-APP_DIR="$APP_DIR" BRANCH="$BRANCH" bash update-code.sh
+APP_DIR="$APP_DIR" BRANCH="$BRANCH" bash "$UPDATE_CODE"
 
 npm ci --omit=dev
 
