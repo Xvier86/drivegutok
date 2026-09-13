@@ -113,6 +113,26 @@ case "${CMDLINE}${ENVIRON}${PM2_ENV}" in
   *) echo "!! Proses berjalan tanpa flag heap dari ecosystem.config.cjs: ${CMDLINE:-tidak terbaca}" ;;
 esac
 
+# Batas ukuran upload di Nginx: tanpa `client_max_body_size`, Nginx menjawab 413 untuk body >1 MB
+# SEBELUM Express melihatnya (aplikasi ini sendiri tidak punya batas 1 MB, lihat README bagian 11).
+# Diperbaiki otomatis kalau sudo bisa tanpa sandi; kalau tidak, cukup dicetak perintahnya.
+if [ -d /etc/nginx ] && ! grep -rqs client_max_body_size /etc/nginx/sites-enabled /etc/nginx/conf.d 2>/dev/null; then
+  if [ -f "$APP_DIR/vps-nginx.sh" ] && { [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; }; then
+    echo ">> client_max_body_size belum ada di Nginx — memperbaiki (upload >1 MB)..."
+    SUDO_CMD=""; [ "$(id -u)" -ne 0 ] && SUDO_CMD="sudo -n"
+    APP_DIR="$APP_DIR" $SUDO_CMD bash "$APP_DIR/vps-nginx.sh" || echo "!! vps-nginx.sh melaporkan masalah; lihat output di atas"
+  else
+    echo "!! client_max_body_size belum ada di Nginx: upload di atas 1 MB akan dijawab 413."
+    echo "!! Jalankan sekali: sudo bash $APP_DIR/vps-nginx.sh"
+  fi
+fi
+
+# Rapikan sisa file VPS (arsip backup lama, /tmp, upload batal, log PM2, cache npm).
+# Matikan dengan: RAPIKAN=0 bash deploy.sh
+if [ "${RAPIKAN:-1}" = "1" ] && [ -f "$APP_DIR/bersih-vps.sh" ]; then
+  bash "$APP_DIR/bersih-vps.sh" || echo "!! Rapikan melaporkan masalah — jalankan manual: bash $APP_DIR/bersih-vps.sh"
+fi
+
 curl -I "http://127.0.0.1:${PORT}/" || true
 pm2 logs gutok-drive --lines 50 --nostream
 

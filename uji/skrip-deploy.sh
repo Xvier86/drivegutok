@@ -221,7 +221,7 @@ kasus_deploy() {
   buat_kasus
   siapkan_remote
   app_persiapan
-  PATH="$BIN:$PATH" CURL_OK=1 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out.log" 2>&1
+  PATH="$BIN:$PATH" CURL_OK=1 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 RAPIKAN=0 bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out.log" 2>&1
   cek_sama "exit" "$?" "0"
   cek_sama "commit app == tip" "$(git -C "$APP" rev-parse --short HEAD)" "$(git -C "$SUMBER" rev-parse --short HEAD)"
   cek_sama "md5 DB produksi utuh" "$(md5_berkas "$APP/data/mydrive.sqlite")" "$MD5_DB"
@@ -246,7 +246,7 @@ kasus_deploy_merge_gagal() {
   printf 'catatan lokal\n' >> "$APP/README.md"
   git -C "$APP" -c user.email=uji@contoh -c user.name=uji commit -qam 'commit lokal di VPS'
   HEAD_LOKAL=$(git -C "$APP" rev-parse --short HEAD)
-  PATH="$BIN:$PATH" CURL_OK=1 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out.log" 2>&1
+  PATH="$BIN:$PATH" CURL_OK=1 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 RAPIKAN=0 bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out.log" 2>&1
   RC=$?
   if [ "$RC" -ne 0 ]; then ok "exit tidak nol ($RC)"; else bad "exit 0 padahal merge harus gagal"; fi
   cek_sama "commit app tidak berubah" "$(git -C "$APP" rev-parse --short HEAD)" "$HEAD_LOKAL"
@@ -261,11 +261,36 @@ kasus_deploy_tak_respond() {
   buat_kasus
   siapkan_remote
   app_persiapan
-  PATH="$BIN:$PATH" CURL_OK=0 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out.log" 2>&1
+  PATH="$BIN:$PATH" CURL_OK=0 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 RAPIKAN=0 bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out.log" 2>&1
   RC=$?
   if [ "$RC" -ne 0 ]; then ok "exit tidak nol ($RC)"; else bad "exit 0 padahal aplikasi tidak merespons"; fi
   cek_ada "log: aplikasi belum merespons" "belum merespons" "$KERJA/out.log"
   cek_sama "commit tetap naik ke tip" "$(git -C "$APP" rev-parse --short HEAD)" "$(git -C "$SUMBER" rev-parse --short HEAD)"
+  cek_sama "md5 DB produksi utuh" "$(md5_berkas "$APP/data/mydrive.sqlite")" "$MD5_DB"
+}
+
+# deploy.sh dengan RAPIKAN=1: bersih-vps.sh wajib ikut jalan, tetapi seluruh foldernya diarahkan ke
+# fixture supaya uji ini tidak menyentuh /tmp asli, ~/.npm, atau ~/.pm2 milik mesin yang menjalankan uji.
+kasus_deploy_rapikan() {
+  header "deploy.sh: rapikan VPS dijalankan otomatis"
+  buat_kasus
+  siapkan_remote
+  app_persiapan
+  TMP_UJI="$KERJA/tmp-uji"
+  mkdir -p "$TMP_UJI"
+  printf 'sisa\n' > "$TMP_UJI/deploy-LAMA.sh"
+  touch -d '3 days ago' "$TMP_UJI/deploy-LAMA.sh"
+  printf 'batal\n' > "$APP/data/tmp/upload-batal.bin"
+  touch -d '3 days ago' "$APP/data/tmp/upload-batal.bin"
+  PATH="$BIN:$PATH" CURL_OK=1 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 RAPIKAN=1 \
+    TMP_DIR="$TMP_UJI" NPM_CACHE="$KERJA/tanpa-cache" CLONE_LAMA="$KERJA/tanpa-clone" \
+    PM2_LOG_DIR="$KERJA/tanpa-log" NGINX_DIR="$KERJA/tanpa-nginx" LOGROTATE_DIR="$KERJA/tanpa-logrotate" \
+    bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out.log" 2>&1
+  cek_sama "exit" "$?" "0"
+  cek_ada "log: bersih-vps.sh dijalankan" "Rapikan VPS" "$KERJA/out.log"
+  cek_ada "log: rapikan selesai" "HASIL: SELESAI" "$KERJA/out.log"
+  if [ -e "$TMP_UJI/deploy-LAMA.sh" ]; then bad "sisa /tmp di folder uji tidak dibuang"; else ok "sisa /tmp dibuang (folder uji)"; fi
+  if [ -e "$APP/data/tmp/upload-batal.bin" ]; then bad "upload batal tidak dibuang"; else ok "upload batal dibuang"; fi
   cek_sama "md5 DB produksi utuh" "$(md5_berkas "$APP/data/mydrive.sqlite")" "$MD5_DB"
 }
 
@@ -274,6 +299,7 @@ printf '### Harness script deploy Gutok Drive — tag=%s, DIR_SCRIPT=%s, fixture
   "$TAG_SEMUA" "$DIR_SCRIPT_INPUT" "$FIXTURE_COMMIT"
 jalankan_kasus update-code "kasus_update_code"
 jalankan_kasus deploy "kasus_deploy"
+jalankan_kasus deploy-rapikan "kasus_deploy_rapikan"
 jalankan_kasus merge-gagal "kasus_deploy_merge_gagal"
 jalankan_kasus tak-respond "kasus_deploy_tak_respond"
 jalankan_kasus redeploy "kasus_redeploy"

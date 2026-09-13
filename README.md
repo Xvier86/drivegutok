@@ -11,7 +11,7 @@ drivegutok/
 ├─ server.js               seluruh backend: API, provider, otentikasi, enkripsi config
 ├─ cleanup.js              pembersih Sampah otomatis (dipanggil PM2/cron)
 ├─ ecosystem.config.cjs    konfigurasi PM2
-├─ *.sh                    setup.sh, deploy.sh, redeploy.sh, update-code.sh, deploy-bersih.sh, perbaiki-vps.sh, vps-nginx.sh
+├─ *.sh                    setup.sh, deploy.sh, redeploy.sh, update-code.sh, deploy-bersih.sh, perbaiki-vps.sh, vps-nginx.sh, bersih-vps.sh
 ├─ assets/                 satu-satunya folder yang dikirim ke browser (express.static)
 │  ├─ index.html           kerangka halaman: hanya #app dan #toast
 │  ├─ logo.jpg
@@ -30,7 +30,7 @@ Script `*.sh` sengaja tetap di akar repo karena alur VPS memanggilnya dengan nam
 
 ```bash
 npm run check                  # sintaks semua berkas + uji cepat
-npm run uji                    # lingkup modul, batas waktu upload, render tiap layar, gaya CSS, ikatan handler
+npm run uji                    # lingkup modul, batas waktu upload, render tiap layar, gaya CSS, ikatan handler, rapikan VPS
 npm run uji:berat              # cleanup.js, server lambat, dan pemakaian RAM saat upload besar
 bash uji/skrip-deploy.sh .     # latihan deploy di VPS palsu (pm2/npm/curl diganti stub)
 ```
@@ -408,6 +408,8 @@ cd /var/www/gutok-drive && git log --oneline -1 && git status --short
 
 `deploy.sh` memanggil `update-code.sh` untuk urusan Git, lalu `npm ci --omit=dev`, `pm2 delete` + `pm2 start ecosystem.config.cjs`, `pm2 save`, dan terakhir menunggu `http://127.0.0.1:3000/api/setup` merespons. Script keluar dengan status gagal kalau aplikasi tidak hidup, jadi log PM2 yang ikut ditampilkan bisa langsung diperiksa. Kalau ada langkah yang gagal — misalnya `git merge --ff-only` ditolak karena VPS punya commit lokal — `deploy.sh` menyalakan ulang aplikasi dengan kode yang ada sekarang, mencetak lokasi backup, lalu menyuruh menjalankan ulang, sehingga deploy yang gagal tidak pernah berakhir dengan situs mati. Folder `data/`, `storage/`, dan `data/tmp/` dibuat lebih dulu sebelum backup karena `tar` gagal kalau `data/` belum ada.
 
+Setelah aplikasi hidup, `deploy.sh` juga mengerjakan dua hal yang dulu jadi langkah manual: memastikan batas upload di Nginx (`client_max_body_size`) terpasang — `vps-nginx.sh` dijalankan otomatis kalau `sudo` bisa tanpa sandi, dan kalau tidak, perintahnya dicetak supaya tinggal disalin — lalu merapikan VPS (`bersih-vps.sh`). Rapikan bisa dimatikan dengan `RAPIKAN=0 bash deploy.sh`.
+
 Saat dijalankan, `deploy.sh`/`redeploy.sh` lebih dulu menyalin dirinya ke `/tmp` lalu menjalankan salinan itu (`exec bash "$SALINAN_DEPLOY"`). Alasannya konkret: kedua script menarik kode dengan `git pull`, sehingga file script-nya sendiri ikut tertulis ulang **saat sedang berjalan**, sedangkan bash membaca script per-offset byte. Tanpa salinan tetap, sisa script bisa tereksekusi dalam campuran versi lama dan baru — pernah terjadi: verifikasi heap di deploy pertama masih memakai versi lama dan mencetak peringatan palsu `!! Proses berjalan tanpa flag heap` padahal batas heap aktif. Kalau kamu memanggil script ini dari alat lain (misalnya `nohup`/`setsid`), pola itu tetap berlaku: yang penting yang dipanggil adalah `bash deploy.sh`.
 
 `update-code.sh` perlu ada karena `setup.sh` menyuntik `STORAGE_CONFIG_KEY` asli ke `ecosystem.config.cjs`, padahal file itu dilacak Git. Tanpa script itu `git pull` ditolak dengan `Your local changes to the following files would be overwritten by merge`. Sekarang nilai secret diamankan lebih dulu (dari `.env`, cadangannya dari file itu sendiri), file dikembalikan ke versi repo, kode ditarik dengan `git merge --ff-only`, lalu secret disuntik ulang. Kalau `git merge --ff-only` gagal (misalnya VPS punya commit lokal sendiri), script berhenti dengan error tanpa mengubah kode, dan `ecosystem.config.cjs` tetap disuntik secret yang benar supaya restart manual tidak merusak kredensial provider. Perlakuan yang sama diberikan pada file runtime SQLite (`data/mydrive.sqlite*`) yang masih dilacak rilis lama: isinya disisihkan dan dipulihkan kembali, karena rilis terbaru menghapus file itu dari Git dan tanpa penanganan ini database produksi ikut terhapus. `redeploy.sh` adalah versi ringkas tanpa backup untuk VPS yang projectnya ada di `~/drivegutok` dan memakai `update-code.sh` yang sama.
@@ -545,11 +547,24 @@ pm2 logs gutok-drive --lines 50 --nostream
 
 Lanjutkan dari browser: login, upload file kecil, buka menu **Sampah**, dan uji satu tombol **Pindahkan**/**CDN**.
 
-Uji batas upload dan konfigurasi Nginx sekaligus (aman dijalankan berulang):
+Untuk batas upload dan Nginx, `deploy.sh` sudah mengurusnya: kalau `client_max_body_size` belum ada di konfigurasi Nginx, dia menjalankan `vps-nginx.sh` (butuh `sudo` tanpa sandi; kalau tidak, perintahnya dicetak supaya tinggal disalin). Menjalankannya manual juga boleh, kapan saja dan aman diulang:
 
 ```bash
 sudo bash vps-nginx.sh
 ```
+
+### Merapikan VPS (sisa file, backup lama, log)
+
+VPS-nya 1 GB, jadi sisa file yang menumpuk bisa membuat upload gagal karena disk penuh (`data/tmp`) dan PM2/Nginx tidak bisa menulis log. `bash deploy.sh` sudah memanggil `bersih-vps.sh` di akhir, dan script itu bisa dijalankan sendiri kapan saja:
+
+```bash
+bash bersih-vps.sh                 # hapus sisa file
+DRY=1 bash bersih-vps.sh           # pratinjau: cetak rencananya saja, tidak menghapus apa pun
+sudo bash bersih-vps.sh            # sekalian memasang logrotate untuk log PM2
+HAPUS_CLONE=1 bash bersih-vps.sh   # ikut menghapus klon lama ~/drivegutok (permanen)
+```
+
+Yang dibuang: arsip `gutok-drive-backup-*.tar.gz` (disisakan 3 terbaru), salinan `deploy.sh`/`redeploy.sh` dan log uji yang tertinggal di `/tmp` (lebih tua dari 24 jam, hanya milik user yang menjalankan), upload batal di `data/tmp`, cadangan konfigurasi Nginx `*.bak-*` (disisakan yang terbaru), cache npm `~/.npm/_cacache`, dan objek `.git` yang tidak terpakai (`git gc`). Yang **tidak pernah** disentuh: `data/mydrive.sqlite*`, `storage/`, `.env`, `ecosystem.config.cjs`, dan kode aplikasi. Upload yang sedang berjalan juga aman karena hanya berkas di atas 24 jam yang dihapus, dan klon lama `~/drivegutok` hanya dilaporkan ukurannya — menghapusnya perlu `HAPUS_CLONE=1` karena permanen.
 
 Kalau `pm2 restart ecosystem.config.cjs --update-env` terasa tidak memuat env baru, paksa dengan `pm2 delete gutok-drive && pm2 start ecosystem.config.cjs && pm2 save`.
 

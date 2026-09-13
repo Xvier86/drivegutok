@@ -6,7 +6,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "cek-sintaks": "node --check server.js && node --check cleanup.js && for f in assets/app.js assets/js/*.js assets/js/views/*.js; do node --check \"$f\" || exit 1; done",
-    "uji": "node uji/lingkup-app.mjs && node uji/upload.mjs && node uji/layar.mjs && node uji/gaya.mjs && node uji/ikatan.mjs",
+    "uji": "node uji/lingkup-app.mjs && node uji/upload.mjs && node uji/layar.mjs && node uji/gaya.mjs && node uji/ikatan.mjs && node uji/bersih.mjs",
     "uji:berat": "node uji/cleanup.mjs && node uji/server-lambat.mjs && node uji/ram.mjs",
     "check": "npm run cek-sintaks && npm run uji"
   },
