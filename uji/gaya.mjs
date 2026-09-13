@@ -65,25 +65,25 @@ for (const berkas of berkasCss) {
 cek('struktur CSS: kurung seimbang dan tanpa selector bersarang', rusak.length === 0);
 rusak.forEach((baris) => console.error(`        ${baris}`));
 
-// Widget penyimpanan: meter tersegmentasi yang menyala berurutan (delay per --i) lalu persentase
-// menyusul setelah segmen terakhir. Semuanya animasi CSS, bukan timer JS, dan wajib tanpa
-// box-shadow — pemisahan bagian hanya lewat hairline --line dan warna segmen.
+// Widget penyimpanan: lingkaran SVG yang busurnya terisi saat halaman masuk (stroke-dasharray), lalu
+// persentase menyusul setelah busur selesai. Semuanya animasi CSS, bukan timer JS, dan wajib tanpa
+// box-shadow — pemisahan bagian hanya lewat hairline --line dan warna busur.
 const cssKomponen = baca('assets/styles/components.css');
 // Komentar dibuang dulu: kalimat penjelas "tanpa box-shadow" di blok ini tidak boleh ikut terbaca
 // sebagai deklarasi box-shadow.
 const blokStorage = cssKomponen.slice(cssKomponen.indexOf('/* Widget penyimpanan'), cssKomponen.indexOf('/* Owner control')).replace(/\/\*[\s\S]*?\*\//g, '');
 cek('blok CSS widget penyimpanan ditemukan', blokStorage.length > 0);
-cek('keyframes nyala-segmen dan muncul-persen ada', /@keyframes\s+nyala-segmen\s*\{/.test(blokStorage) && /@keyframes\s+muncul-persen\s*\{/.test(blokStorage));
-cek('segmen menyala berurutan lewat animation-delay calc(var(--i))', /animation-delay:\s*calc\(var\(--i\)/.test(blokStorage));
-cek('persentase muncul setelah meter selesai (var(--delay-pct))', /\.storage-card\.is-anim \.storage-pct/.test(blokStorage) && /var\(--delay-pct\)/.test(blokStorage));
+cek('keyframes isi-lingkaran dan muncul-persen ada', /@keyframes\s+isi-lingkaran\s*\{/.test(blokStorage) && /@keyframes\s+muncul-persen\s*\{/.test(blokStorage));
+cek('busur lingkaran terisi lewat .storage-ring.is-anim .ring-isi', /\.storage-ring\.is-anim \.ring-isi\s*\{/.test(blokStorage) && /stroke-dasharray/.test(blokStorage));
+cek('persentase muncul setelah busur selesai (delay 700ms)', /\.storage-card\.is-anim \.storage-pct/.test(blokStorage) && /animation-delay:\s*700ms/.test(blokStorage));
 cek('widget penyimpanan tanpa box-shadow', !/box-shadow/.test(blokStorage));
-cek('meter memakai token --amber-glow, --amber-unlit, dan hairline --line', /var\(--amber-glow\)/.test(blokStorage) && /var\(--amber-unlit\)/.test(blokStorage) && /var\(--line\)/.test(blokStorage));
+cek('lingkaran memakai token --amber-glow, --amber-unlit, dan hairline --line', /var\(--amber-glow\)/.test(blokStorage) && /var\(--amber-unlit\)/.test(blokStorage) && /var\(--line\)/.test(blokStorage));
 cek('angka penyimpanan memakai var(--f-mono)', /font-family:\s*var\(--f-mono\)/.test(blokStorage));
 // Animasi hanya sekali per page-load: dijaga flag modul, dan prefers-reduced-motion melewatinya
-// sama sekali (segmen langsung menyala penuh, angka tidak dihitung naik).
+// sama sekali (busur langsung penuh, angka tidak dihitung naik).
 const sumberFiles = baca('assets/js/views/files.js');
-cek('animasi meter dikunci flag sekali per page-load', /let storageDimainkan = false/.test(sumberFiles) && /storageDimainkan = true/.test(sumberFiles));
-cek('animasi meter menghormati prefers-reduced-motion', /prefers-reduced-motion: reduce/.test(sumberFiles));
+cek('animasi lingkaran dikunci flag sekali per page-load', /let storageDimainkan = false/.test(sumberFiles) && /storageDimainkan = true/.test(sumberFiles));
+cek('animasi lingkaran menghormati prefers-reduced-motion', /prefers-reduced-motion: reduce/.test(sumberFiles));
 
 // Owner control: daftar baris + badge + timeline. Grid kartu lama wajib benar-benar hilang, tiga
 // warna dot status wajib ada (amber = aktif, abu = nonaktif, merah redup = belum siap/kuota error),

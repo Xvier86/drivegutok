@@ -266,7 +266,7 @@ Semua beban berat (TLS, kompresi, cache, hooking file besar) sengaja di luar Nod
 
 ## 8. Setup Provider melalui Dashboard
 
-Login sebagai Owner, buka `Owner control`, lalu konfigurasi provider. Tidak ada provider bawaan: daftar storage kosong sampai Owner menambahkannya sendiri, dan provider baru muncul di pilihan upload setelah dinyatakan **Aktif** (unggahan ditolak `409 Belum ada provider remote yang aktif dan terkonfigurasi.` selama belum ada). Widget **Penyimpanan** di sidebar dashboard menampilkan akumulasi pemakaian semua provider (satu angka terpakai, kapasitas total, dan meter tersegmentasi — tanpa rincian per provider), jadi kuota provider terlihat tanpa membuka `Owner control`. Angka di kedua tempat berasal dari sumber yang sama: `/api/dashboard` dan `/api/admin/overview` sama-sama memakai nilai tersimpan lalu menyegarkan kuota asli di latar belakang (kegagalan disimpan sementara, jadi provider yang diblokir tidak dipanggil ulang setiap menit).
+Login sebagai Owner, buka `Owner control`, lalu konfigurasi provider. Tidak ada provider bawaan: daftar storage kosong sampai Owner menambahkannya sendiri, dan provider baru muncul di pilihan upload setelah dinyatakan **Aktif** (unggahan ditolak `409 Belum ada provider remote yang aktif dan terkonfigurasi.` selama belum ada). Widget **Penyimpanan** di sidebar dashboard menampilkan akumulasi pemakaian provider yang kapasitasnya dilaporkan sendiri (satu angka terpakai, kapasitas total, dan lingkaran persentase — tanpa rincian per provider); **Telegram tidak ikut dihitung** karena kuotanya diisi manual Owner, bukan ruang yang benar-benar tersedia. Angka di kedua tempat berasal dari sumber yang sama: `/api/dashboard` dan `/api/admin/overview` sama-sama memakai nilai tersimpan lalu menyegarkan kuota asli di latar belakang (kegagalan disimpan sementara, jadi provider yang diblokir tidak dipanggil ulang setiap menit).
 
 ### Google Drive
 
@@ -342,9 +342,9 @@ Kredensial yang salah atau akun yang diblokir tampil apa adanya di badge provide
 
 ### Widget penyimpanan di sidebar
 
-- Widget **Penyimpanan** menampilkan satu angka akumulasi semua provider: angka terpakai (font JetBrains Mono, menghitung naik dari 0 saat pertama muat), teks `dari` + kapasitas total, meter 28 segmen yang menyala berurutan dari kiri (minimal satu segmen begitu ada pemakaian, supaya 1 MB dari 15 GB tidak terlihat seperti meter kosong), dan persentase kecil di kanan atas yang muncul setelah segmen terakhir selesai.
-- Nama provider, status aktif/nonaktif, dan bar kuota per provider tidak lagi ditampilkan di sidebar (rinciannya tetap ada di kartu provider halaman `Owner control`). Angka terpakai/total tetap dihitung dari semua provider yang dikembalikan `/api/dashboard`, sama seperti sebelumnya.
-- Angka, segmen menyala, dan persentase sudah final di HTML: kalau animasi dilewati (atau JS mati), yang terlihat tetap nilai yang benar, bukan meter kosong. Animasi masuk hanya jalan **sekali per muat halaman** (dijaga flag modul, jadi pindah folder tidak mengulanginya) dan berhenti total saat `prefers-reduced-motion` aktif — segmen langsung menyala penuh dan angka tidak dihitung naik.
+- Widget **Penyimpanan** menampilkan satu angka akumulasi semua provider non-Telegram: angka terpakai (font JetBrains Mono, menghitung naik dari 0 saat pertama muat), teks `dari` + kapasitas total, lingkaran SVG yang busurnya terisi penuh saat halaman masuk (dari puncak, searah jarum jam; jalur kosongnya tetap terlihat), dan persentase di tengah lingkaran yang muncul setelah busurnya selesai.
+- Nama provider, status aktif/nonaktif, dan bar kuota per provider tidak lagi ditampilkan di sidebar (rinciannya tetap ada di kartu provider halaman `Owner control`). Kapasitas total dihitung otomatis dari akumulasi provider yang ditambahkan **kecuali Telegram**: kuota Telegram diisi manual Owner (Bot API tidak punya endpoint kuota), jadi angka itu bukan ruang nyata dan tidak ikut dijumlahkan — provider yang kapasitasnya dilaporkan sendiri (Mega, Google Drive) tetap dipakai apa adanya.
+- Angka, busur lingkaran, dan persentase sudah final di HTML: kalau animasi dilewati (atau JS mati), yang terlihat tetap nilai yang benar, bukan lingkaran kosong. Animasi masuk hanya jalan **sekali per muat halaman** (dijaga flag modul, jadi pindah folder tidak mengulanginya) dan berhenti total saat `prefers-reduced-motion` aktif — busur langsung penuh dan angka tidak dihitung naik.
 - Font display (`Space Grotesk`) dan font angka (`JetBrains Mono`, token `--f-mono`) dimuat dari Google Fonts di `index.html`; warna meter memakai token `--amber-glow`/`--amber-unlit` dan hairline `--line`, tanpa `box-shadow`.
 
 ### Cabut akses member
@@ -456,7 +456,7 @@ curl -s https://gutokdrive.world/js/views/admin.js | md5sum - ; md5sum assets/js
 Kalau `md5sum`-nya sama tetapi gejalanya bertahan, penyebabnya cache browser — Ctrl+Shift+R (atau mode incognito) satu kali, lalu muat ulang normal.
 
 ```bash
-curl -s https://gutokdrive.world/styles/components.css | grep -c storage-meter   # 1 = versi baru
+curl -s https://gutokdrive.world/styles/components.css | grep -c storage-ring   # 1 = versi baru
 ```
 
 ### Tombol dashboard tidak bereaksi (Owner control, Upload file, Sampah, logout)

@@ -23,15 +23,11 @@
      butuh perhatian tidak berteriak seperti tombol hapus. */
   --danger-dim: rgba(226, 104, 79, 0.55);
 
-  /* Meter penyimpanan: satu nada menyala, satu nada mati, dan hairline --line untuk garis
-     pemisahnya. Widget ini sengaja tidak memakai box-shadow — pemisahan bagian hanya lewat
-     hairline dan warna segmen. */
+  /* Lingkaran penyimpanan: satu nada menyala (busur terpakai), satu nada mati (jalur kosong), dan
+     hairline --line untuk garis pemisahnya. Widget ini sengaja tidak memakai box-shadow —
+     pemisahan bagian hanya lewat hairline dan warna busur. */
   --amber-glow: #ffd968;
   --amber-unlit: #33291a;
-  /* Knob untuk animasi masuk meter: --i dipasang inline per segmen oleh files.js, --delay-pct
-     dipasang dari JS setelah segmen terakhir menyala. Nilai 0 di sini hanya jaring pengaman. */
-  --i: 0;
-  --delay-pct: 0ms;
 
   --radius-sm: 8px;
   --radius: 12px;

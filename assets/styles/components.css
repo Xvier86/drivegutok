@@ -227,26 +227,32 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .loading-spinner { width: 34px; height: 34px; border: 3px solid var(--line); border-top-color: var(--gold-bright); border-radius: var(--radius-pill); animation: spin 0.9s linear infinite; }
 .loading-dots { color: var(--muted); font-size: var(--fs-sm); }
 
-/* Widget penyimpanan: satu meter tersegmentasi untuk akumulasi semua provider. Tidak ada baris,
-   nama, atau status per provider di sini — rincian itu hanya ada di Owner control. Tanpa
-   box-shadow: pemisahan bagian hanya lewat hairline --line dan warna segmen. */
+/* Widget penyimpanan: satu lingkaran SVG untuk akumulasi semua provider. Tidak ada baris, nama,
+   atau status per provider di sini — rincian itu hanya ada di Owner control. Busur digambar dengan
+   stroke-dasharray dalam persen (pathLength="100" di markup), jadi tanpa JS pun busurnya sudah
+   benar. Tanpa box-shadow: pemisahan bagian hanya lewat hairline --line dan warna busur. */
 .storage-card { display: grid; gap: var(--space-3); border-color: var(--line); }
 .storage-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
 .storage-label { font-family: var(--font-display); font-size: var(--fs-md); color: var(--muted-strong); }
-.storage-pct { font-family: var(--f-mono); font-size: var(--fs-sm); color: var(--amber-glow); }
 .storage-readout { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
 .storage-isi { font-family: var(--f-mono); font-size: var(--fs-xl); color: var(--paper); }
 .storage-dari { font-size: var(--fs-xs); color: var(--muted); }
 .storage-total { font-family: var(--f-mono); color: var(--muted-strong); }
-.storage-meter { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--ink-soft); }
-.segmen { flex: 1; height: 12px; border-radius: 2px; background: var(--amber-unlit); }
-.segmen.on { background: var(--amber-glow); }
+/* Lingkaran: jalur penuh selalu terlihat (--amber-unlit), busur terpakai menimpanya (--amber-glow).
+   grid + place-items supaya angka persen tepat di tengah tanpa position: absolute. -90deg membuat
+   busur mulai dari puncak, bukan dari jam tiga. */
+.storage-ring { display: grid; place-items: center; }
+.storage-ring-svg { grid-area: 1 / 1; width: 100%; max-width: 132px; transform: rotate(-90deg); }
+.ring-jalur { fill: none; stroke: var(--amber-unlit); stroke-width: 4; }
+.ring-isi { fill: none; stroke: var(--amber-glow); stroke-width: 4; stroke-linecap: round; }
+.storage-pct { grid-area: 1 / 1; font-family: var(--f-mono); font-size: var(--fs-lg); color: var(--amber-glow); }
 /* Animasi masuk hanya dipasang kalau JS menambahkan .is-anim: tanpa itu (reduced-motion, atau
-   render ulang) segmen dan persentase sudah dalam keadaan final, jadi tidak ada kedipan. */
-.storage-meter.is-anim .segmen.on { animation: nyala-segmen 240ms var(--motion) both; animation-delay: calc(var(--i) * 26ms); }
-.storage-card.is-anim .storage-pct { animation: muncul-persen 340ms var(--motion) both; animation-delay: var(--delay-pct); }
+   render ulang) busur dan persentase sudah dalam keadaan final, jadi tidak ada kedipan. Persentase
+   menyusul setelah busur selesai supaya angka tidak terbaca sebelum busurnya bergerak. */
+.storage-ring.is-anim .ring-isi { animation: isi-lingkaran 900ms var(--motion) both; }
+.storage-card.is-anim .storage-pct { animation: muncul-persen 340ms var(--motion) both; animation-delay: 700ms; }
 
-@keyframes nyala-segmen { from { background: var(--amber-unlit); } }
+@keyframes isi-lingkaran { from { stroke-dasharray: 0 100; } }
 
 @keyframes muncul-persen { from { opacity: 0; } }
 

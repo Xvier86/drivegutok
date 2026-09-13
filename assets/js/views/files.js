@@ -4,22 +4,30 @@ import { formatDateTime, folderAndDescendants, ikonMime, isCdnMime, state } from
 import { ke } from '../router.js';
 import { chipAkun } from './akun.js';
 
-const SEGMEN_METER = 28; // jumlah segmen meter penyimpanan; cukup halus di sidebar 264px
-let storageDimainkan = false; // animasi masuk meter hanya sekali per page-load, bukan tiap render ulang
+let storageDimainkan = false; // animasi masuk lingkaran hanya sekali per page-load, bukan tiap render ulang
 
 export async function renderDashboard() { const data = await api(`/api/dashboard?${state.folderId ? `folderId=${state.folderId}` : ''}`); state.dashboard = data; state.folderId = data.folderId || null;
-  const totalTerpakai = data.providers.reduce((total, provider) => total + Number(provider.used_bytes || 0), 0);
-  const totalKapasitas = data.providers.reduce((total, provider) => total + Number(provider.capacity_bytes || 0), 0);
-  // Widget penyimpanan: satu angka akumulasi semua provider, tanpa nama/status/baris per provider
-  // (rinciannya hanya di Owner control). Markup sudah memuat keadaan akhir — angka, segmen menyala,
-  // dan persen — jadi kalau animasi dilewati atau JS mati, yang terlihat tetap nilai yang benar,
-  // bukan meter kosong. Angka dan segmen dipakai apa adanya dari /api/dashboard.
+  // Total penyimpanan dihitung otomatis dari akumulasi akun provider yang ditambahkan, kecuali
+  // Telegram: kuota Telegram diisi manual Owner (Bot API tidak punya endpoint kuota), jadi angka itu
+  // bukan ruang nyata dan menggeser "tersedia" kalau ikut dijumlahkan. Provider yang kapasitasnya
+  // dilaporkan sendiri (Mega, Google Drive) tetap dipakai apa adanya.
+  const providerTertambah = data.providers.filter((provider) => provider.kind !== 'telegram');
+  const totalTerpakai = providerTertambah.reduce((total, provider) => total + Number(provider.used_bytes || 0), 0);
+  const totalKapasitas = providerTertambah.reduce((total, provider) => total + Number(provider.capacity_bytes || 0), 0);
+  // Widget penyimpanan: satu lingkaran akumulasi semua provider, tanpa nama/status/baris per
+  // provider (rinciannya hanya di Owner control). Markup sudah memuat keadaan akhir — angka, busur
+  // lingkaran, dan persen — jadi kalau animasi dilewati atau JS mati, yang terlihat tetap nilai yang
+  // benar, bukan lingkaran kosong. Angka dan busur dipakai apa adanya dari /api/dashboard.
   const persenStorage = totalKapasitas ? Math.min(100, totalTerpakai / totalKapasitas * 100) : 0;
-  const segmenNyala = totalKapasitas ? (totalTerpakai > 0 ? Math.max(1, Math.round(persenStorage / 100 * SEGMEN_METER)) : 0) : 0;
   const labelPersen = totalKapasitas ? (persenStorage < 1 && totalTerpakai > 0 ? '<1%' : `${Math.round(persenStorage)}%`) : '—';
   const teksTotal = totalKapasitas ? formatBytes(totalKapasitas) : 'tidak dilaporkan';
-  // ponytail: 28 segmen sudah cukup di sidebar 264px; naikkan SEGMEN_METER kalau meter pindah ke panel lebar.
-  const segmenMeter = Array.from({ length: SEGMEN_METER }, (_, i) => `<span class="segmen${i < segmenNyala ? ' on' : ''}" style="--i:${i}"></span>`).join('');
+  // Busur lingkaran: pathLength="100" menormalkan keliling ke 100, jadi stroke-dasharray bisa ditulis
+  // langsung dalam persen (busur + sisanya) tanpa menghitung keliling dari r — dan nilainya sudah
+  // final di markup, jadi animasi yang dilewati tidak menyisakan busur kosong.
+  // ponytail: satu lingkaran tanpa label tengah tambahan; kalau nanti perlu angka kapasitas di
+  // tengah, geser .storage-readout ke dalam .storage-ring.
+  const busurLingkaran = `${totalKapasitas ? Math.round(persenStorage * 10) / 10 : 0} 100`;
+  const lingkaran = `<div class="storage-ring" id="storage-ring" role="img" aria-label="Terpakai ${formatBytes(totalTerpakai)} dari ${teksTotal}${totalKapasitas ? ` (${labelPersen})` : ''}"><svg class="storage-ring-svg" viewBox="0 0 42 42" aria-hidden="true"><circle class="ring-jalur" cx="21" cy="21" r="18"></circle><circle class="ring-isi" cx="21" cy="21" r="18" pathLength="100" stroke-dasharray="${busurLingkaran}"></circle></svg><span class="storage-pct" id="storage-pct">${labelPersen}</span></div>`;
   // Pemisahan berkas biasa dan berkas CDN memakai kolom yang sudah ada: `cdn_enabled` menandai berkas
   // yang punya link publik /cdn/<slug>. Satu permintaan dashboard saja, lalu tab hanya menyembunyikan
   // baris lewat CSS (atribut data-tab di panel), jadi pindah tab tidak memanggil server.
@@ -40,29 +48,27 @@ export async function renderDashboard() { const data = await api(`/api/dashboard
   // dalamnya ikut menggulir, jadi tombol Unggah akan hilang dari sudut layar begitu halaman digulir.
   // Di luar shell, `fixed` tetap menempel di viewport.
 
-  app.innerHTML = `<div class="app-shell"><aside class="sidebar"><div class="brand"><img src="/logo.jpg" alt="" class="brand-logo" width="26" height="26">Gutok<span>Drive</span></div><div><p class="workspace-label">Workspace</p><nav class="nav"><button class="active">${icon('layout-grid')} Semua file</button><button id="new-folder">${icon('folder-plus')} Folder baru</button><button id="trash-view">${icon('trash-2')} Sampah${data.trashCount ? ` (${data.trashCount})` : ''}</button>${state.user.role === 'owner' ? `<button id="admin-view">${icon('settings-2')} Kendali workspace</button>` : ''}</nav></div><div class="sidebar-bottom"><section class="panel storage-card" id="storage-card"><div class="storage-head"><span class="storage-label">Penyimpanan</span><span class="storage-pct" id="storage-pct">${labelPersen}</span></div><p class="storage-readout"><span class="storage-isi" id="storage-isi" data-bytes="${totalTerpakai}">${formatBytes(totalTerpakai)}</span><span class="storage-dari">dari <span class="storage-total">${teksTotal}</span></span></p><div class="storage-meter" id="storage-meter" role="img" aria-label="Terpakai ${formatBytes(totalTerpakai)} dari ${teksTotal}${totalKapasitas ? ` (${labelPersen})` : ''}">${segmenMeter}</div></section><button class="side-link btn-block mt-md" id="logout">${icon('log-out')} Keluar</button></div></aside><main class="main"><header class="topbar"><div class="breadcrumb">${crumb}</div><div class="topbar-kanan" id="topbar-kanan">${chipAkun()}</div></header><div class="view-head"><div><h1 class="view-title">${state.folderId ? esc(data.path?.at(-1)?.name || 'Folder') : 'Penyimpanan'}</h1><p class="subtle">${data.folders.length} folder · ${berkasBiasa.length} file · ${berkasCdn.length} berkas CDN</p></div><div class="tabs" role="tablist">${tombolTab('file', 'File', berkasBiasa.length)}${tombolTab('cdn', 'CDN', berkasCdn.length)}</div></div><div class="action-row"><button class="secondary" id="folder-trigger">${icon('folder-plus')} Folder baru</button><input id="file-input" type="file" multiple hidden></div><section class="panel files-panel" data-tab="${tab}"><div class="panel-heading"><h2>${tab === 'cdn' ? 'Berkas CDN' : 'Isi folder'}</h2><span class="eyebrow">${data.folders.length + data.files.length} item · ${formatBytes(data.stats.bytes)}</span></div><div class="grid file-list">${data.folders.map(barisFolder).join('')}${data.files.map(barisFile).join('')}${kosong}</div><div class="dropzone" id="dropzone">${icon('move-down',18)}<br>Tarik dan lepas file di sini</div></section></main></div><button class="fab" id="upload-trigger" title="Upload file" aria-label="Upload file">${icon('upload-cloud',24)}</button>`; }
+  app.innerHTML = `<div class="app-shell"><aside class="sidebar"><div class="brand"><img src="/logo.jpg" alt="" class="brand-logo" width="26" height="26">Gutok<span>Drive</span></div><div><p class="workspace-label">Workspace</p><nav class="nav"><button class="active">${icon('layout-grid')} Semua file</button><button id="new-folder">${icon('folder-plus')} Folder baru</button><button id="trash-view">${icon('trash-2')} Sampah${data.trashCount ? ` (${data.trashCount})` : ''}</button>${state.user.role === 'owner' ? `<button id="admin-view">${icon('settings-2')} Kendali workspace</button>` : ''}</nav></div><div class="sidebar-bottom"><section class="panel storage-card" id="storage-card"><div class="storage-head"><span class="storage-label">Penyimpanan</span></div><p class="storage-readout"><span class="storage-isi" id="storage-isi" data-bytes="${totalTerpakai}">${formatBytes(totalTerpakai)}</span><span class="storage-dari">dari <span class="storage-total">${teksTotal}</span></span></p>${lingkaran}</section><button class="side-link btn-block mt-md" id="logout">${icon('log-out')} Keluar</button></div></aside><main class="main"><header class="topbar"><div class="breadcrumb">${crumb}</div><div class="topbar-kanan" id="topbar-kanan">${chipAkun()}</div></header><div class="view-head"><div><h1 class="view-title">${state.folderId ? esc(data.path?.at(-1)?.name || 'Folder') : 'Penyimpanan'}</h1><p class="subtle">${data.folders.length} folder · ${berkasBiasa.length} file · ${berkasCdn.length} berkas CDN</p></div><div class="tabs" role="tablist">${tombolTab('file', 'File', berkasBiasa.length)}${tombolTab('cdn', 'CDN', berkasCdn.length)}</div></div><div class="action-row"><button class="secondary" id="folder-trigger">${icon('folder-plus')} Folder baru</button><input id="file-input" type="file" multiple hidden></div><section class="panel files-panel" data-tab="${tab}"><div class="panel-heading"><h2>${tab === 'cdn' ? 'Berkas CDN' : 'Isi folder'}</h2><span class="eyebrow">${data.folders.length + data.files.length} item · ${formatBytes(data.stats.bytes)}</span></div><div class="grid file-list">${data.folders.map(barisFolder).join('')}${data.files.map(barisFile).join('')}${kosong}</div><div class="dropzone" id="dropzone">${icon('move-down',18)}<br>Tarik dan lepas file di sini</div></section></main></div><button class="fab" id="upload-trigger" title="Upload file" aria-label="Upload file">${icon('upload-cloud',24)}</button>`; }
 // Ikatan tombol dipasang satu kali saja: app.js memanggil bindDashboard() setelah setiap render
 // (peristiwa 'layar-siap' -> pasangUlang). Dulu fungsi di atas juga memanggilnya sendiri, jadi
 // #admin-view/#admin-card/#trash-view punya dua listener — satu klik = dua kali /api/admin/overview
 // (terlihat di browser tiruan jsdom: endpoint itu terpanggil dua kali).
 export function bindDashboard() { if (!document.querySelector('#upload-trigger')) return; document.querySelectorAll('[data-open-folder]').forEach((item) => item.onclick = (event) => { if (event.target.closest('.card-actions')) return; state.folderId = item.dataset.openFolder; ke('dashboard'); }); document.querySelectorAll('[data-folder]').forEach((item) => item.onclick = () => { state.folderId = item.dataset.folder || null; ke('dashboard'); }); document.querySelector('#new-folder').onclick = () => openModal('folder'); document.querySelector('#folder-trigger').onclick = () => openModal('folder'); document.querySelector('#upload-trigger').onclick = () => openUploadModal('file'); document.querySelector('#dropzone').ondragover = (event) => { event.preventDefault(); event.currentTarget.classList.add('drag'); }; document.querySelector('#dropzone').ondragleave = (event) => event.currentTarget.classList.remove('drag'); document.querySelector('#dropzone').ondrop = (event) => { event.preventDefault(); event.currentTarget.classList.remove('drag'); openUploadModal('file', event.dataTransfer.files); }; document.querySelector('#admin-view')?.addEventListener('click', async () => { try { await ke('admin'); } catch (error) { notify(error.message); } }); document.querySelectorAll('.tab').forEach((tab) => tab.onclick = () => { state.tab = tab.dataset.tab === 'cdn' ? 'cdn' : 'file'; document.querySelector('.files-panel')?.setAttribute('data-tab', state.tab); document.querySelectorAll('.tab').forEach((lain) => lain.classList.toggle('active', lain === tab)); }); document.querySelector('#trash-view')?.addEventListener('click', async () => { try { await ke('trash'); } catch (error) { notify(error.message); } }); animateStorage(); }
 
-// Animasi masuk widget penyimpanan: angka menghitung naik dari 0, segmen menyala berurutan dari
-// kiri, lalu persentase menyusul. Dipanggil dari bindDashboard() (peristiwa 'layar-siap'), tetapi
-// flag modul membuatnya jalan sekali per page-load: render ulang setelah pindah folder tidak
-// mengulang animasi — markup baru sudah berisi nilai final. reduced-motion: tidak ada animasi sama
-// sekali (segmen langsung menyala penuh dan angka tidak dihitung naik), sesuai keadaan markup.
+// Animasi masuk widget penyimpanan: busur lingkaran terisi dari puncak, angka menghitung naik dari 0,
+// lalu persentase menyusul. Dipanggil dari bindDashboard() (peristiwa 'layar-siap'), tetapi flag
+// modul membuatnya jalan sekali per page-load: render ulang setelah pindah folder tidak mengulang
+// animasi — markup baru sudah berisi nilai final. reduced-motion: tidak ada animasi sama sekali
+// (busur langsung penuh dan angka tidak dihitung naik), sesuai keadaan markup.
 function animateStorage() {
-  const meter = document.querySelector('#storage-meter');
+  const lingkaran = document.querySelector('#storage-ring');
   const angka = document.querySelector('#storage-isi');
-  if (!meter || !angka || storageDimainkan) return;
+  if (!lingkaran || !angka || storageDimainkan) return;
   storageDimainkan = true;
   if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) return;
   const target = Number(angka.dataset.bytes || 0);
-  const nyala = meter.querySelectorAll('.segmen.on').length;
   const kartu = document.querySelector('#storage-card');
-  kartu?.style.setProperty('--delay-pct', `${nyala * 26 + 240}ms`);
-  meter.classList.add('is-anim');
+  lingkaran.classList.add('is-anim');
   kartu?.classList.add('is-anim');
   const mulai = performance.now();
   const hitungNaik = (kini) => {

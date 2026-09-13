@@ -26,7 +26,7 @@ const media = (id, name, mime_type, tambahan = {}) => ({ id, name, mime_type, si
 const mediaUji = [media('f2', 'foto.jpg', 'image/jpeg'), media('f3', 'lagu.mp3', 'audio/mpeg'), media('f4', 'klip.mp4', 'video/mp4'), media('f5', 'banner.png', 'image/png', { cdn_enabled: 1, cdn_slug: 'cdn-banner' })];
 const folder = { id: 'd1', name: 'Dokumen', parent_id: null, depth: 0, deleted_at: '2026-09-13T00:00:00Z' };
 const jawaban = {
-  '/api/dashboard': { user: { id: 'u1', username: 'vier', role: 'owner' }, folderId: null, folders: [folder], files: [file, ...mediaUji], providers: [provider], stats: { bytes: 2048, files: 1 }, trashCount: 1, uptimeSeconds: 3600 },
+  '/api/dashboard': { user: { id: 'u1', username: 'vier', role: 'owner' }, folderId: null, folders: [folder], files: [file, ...mediaUji], providers: [provider, providerTelegram], stats: { bytes: 2048, files: 1 }, trashCount: 1, uptimeSeconds: 3600 },
   '/api/admin/overview': { providers: [provider, providerTelegram], files: { count: 5, bytes: 2048 }, users: [{ id: 'u1', username: 'vier', email: 'a@b.c', role: 'owner', status: 'active', created_at: '2026-09-13T00:00:00Z' }, { id: 'u2', username: 'tamu', email: 't@b.c', role: 'user', status: 'suspended', created_at: '2026-09-13T00:00:00Z' }],   // Tiga entri: dua di hari yang sama + satu di hari lain, supaya pengelompokan tanggal timeline
   // benar-benar diuji (dua entri pertama hanya beda satu menit, jadi zona waktu mana pun tetap
   // menaruhnya di hari yang sama).
@@ -53,10 +53,10 @@ Object.assign(rute, { dashboard: files.renderDashboard, admin: admin.renderAdmin
 // Kelas penanda yang wajib ada di markup tiap layar. Dashboard memakai daftar baris ala Drive
 // (tab pemisah File/CDN + widget penyimpanan ringkas di sidebar). Owner control memakai daftar
 // baris berhairline (provider & member), badge satu fakta per elemen, dan timeline aktivitas.
-// Widget penyimpanan sengaja TIDAK merinci per provider: daftar di bawah memeriksa meter
-// tersegmentasi, bukan baris provider.
+// Widget penyimpanan sengaja TIDAK merinci per provider: daftar di bawah memeriksa lingkaran
+// akumulasi (SVG), bukan meter per provider.
 const WAJIB = {
-  renderDashboard: ['storage-card', 'storage-head', 'storage-label', 'Penyimpanan', 'storage-isi', 'data-bytes', 'storage-dari', 'storage-total', 'storage-pct', 'storage-meter', 'segmen', '--i:', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn', 'class="fab"', 'upload-trigger'],
+  renderDashboard: ['storage-card', 'storage-head', 'storage-label', 'Penyimpanan', 'storage-isi', 'data-bytes', 'storage-dari', 'storage-total', 'storage-pct', 'storage-ring', 'ring-jalur', 'ring-isi', 'pathLength="100"', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn', 'class="fab"', 'upload-trigger'],
   renderAdmin: ['provider-list', 'member-list', 'member-row', 'member-access', 'data-member', 'badge', 'ghost', 'timeline', 'tl-hari', 'tl-item', 'tl-titik', 'tl-jam', 'terkirim ke Telegram', 'data-auth="service"'],
   // Pengaturan akun: dua formulir, masing-masing dengan kolom password saat ini (tanpa itu halaman ini
   // hanya jadi teater — servernya sendiri yang menjaga, lihat uji/akun.mjs).
@@ -119,11 +119,15 @@ else { console.error('  GAGAL  baris aktivitas masih memuat tanggal lengkap'); g
 const sisaProvider = JEJAK_PROVIDER.filter((jejak) => tangkapan.renderDashboard.includes(jejak));
 if (sisaProvider.length) { console.error(`  GAGAL  dashboard masih merender rincian per provider: ${sisaProvider.join(', ')}`); gagal += 1; }
 else console.log('  ok  dashboard tanpa rincian per provider');
-// Jumlah segmen meter ikut diperiksa supaya meter tidak menyusut tanpa disadari (mis. 5 segmen
-// seperti versi lama yang satu segmen per provider).
-const jumlahSegmen = (tangkapan.renderDashboard.match(/class="segmen/g) || []).length;
-if (jumlahSegmen === 28) console.log('  ok  meter penyimpanan 28 segmen');
-else { console.error(`  GAGAL  meter penyimpanan ${jumlahSegmen} segmen (harus 28)`); gagal += 1; }
+// Lingkaran penyimpanan: busur digambar lewat stroke-dasharray persen (pathLength="100"), dan
+// akumulasi kapasitas wajib mengabaikan Telegram — kuotanya diisi manual Owner (Bot API tidak punya
+// endpoint kuota), jadi kalau ikut dijumlahkan angka "tersedia" melompat ke ruang yang bukan milik
+// provider mana pun. Data uji: Google Drive 1 KB dari 2 KB (=50%) plus Telegram 4 KB dari 1 MB;
+// kalau Telegram ikut terhitung, busurnya 0,4% dan kapasitas totalnya "1.0 MB".
+const busur = tangkapan.renderDashboard.match(/class="ring-isi"[^>]*stroke-dasharray="([^"]+)"/)?.[1];
+const dipakaiTeks = tangkapan.renderDashboard.match(/id="storage-isi" data-bytes="(\d+)"/)?.[1];
+if (busur === '50 100' && dipakaiTeks === '1024' && !tangkapan.renderDashboard.includes('1.0 MB')) console.log('  ok  lingkaran penyimpanan 50% dari akumulasi provider non-Telegram');
+else { console.error(`  GAGAL  lingkaran penyimpanan busur=${busur} terpakai=${dipakaiTeks} kuota-Telegram-ikut-terhitung=${tangkapan.renderDashboard.includes('1.0 MB')}`); gagal += 1; }
 // Tombol Unggah pindah dari toolbar ke tombol mengapung: satu aksi utama yang selalu terjangkau,
 // dan toolbar cukup menyisakan Folder baru + Upload CDN (yang disisipkan bindCdnUpload saat runtime).
 const dasbor = tangkapan.renderDashboard;
