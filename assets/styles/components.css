@@ -166,7 +166,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .dot.off { background: var(--muted); opacity: 0.55; }
 .dot.error { background: var(--danger-dim); }
 .stats { display: grid; gap: var(--space-3); }
-.server-status { color: var(--muted); font-size: var(--fs-sm); }
+/* Status server di header: dulu teks "Uptime X jam · Y digunakan" — angka yang membeku begitu halaman
+   dibuka, dan baris teks yang menua di header. Sekarang tiga batang berdenyut bergantian: penanda
+   "server hidup" tanpa teks. Angkanya tetap dibaca pembaca layar lewat aria-label #server-status. */
+.server-status { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
+.server-status i { width: 3px; height: 100%; border-radius: var(--radius-pill); background: var(--amber-glow); animation: denyut-status 1.2s var(--motion) infinite; }
+.server-status i:nth-child(2) { animation-delay: 0.15s; }
+.server-status i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes denyut-status { 0%, 100% { transform: scaleY(0.3); opacity: 0.45; } 50% { transform: scaleY(1); opacity: 1; } }
 .avatar { display: grid; place-items: center; width: 38px; height: 38px; border-radius: var(--radius-pill); background: var(--gold-soft); color: var(--gold-bright); font-weight: 600; }
 /* Chip akun di header: satu-satunya jalan masuk ke Pengaturan akun (klik chip → #/akun lewat
    delegasi di app.js). Elemennya <button>, jadi reset tampilan tombol bawaan browser harus eksplisit —

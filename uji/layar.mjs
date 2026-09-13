@@ -149,5 +149,15 @@ if (labelHilang.length) { console.error(`  GAGAL  label akar "Penyimpanan" hilan
 else console.log('  ok  label akar "Penyimpanan" di breadcrumb, judul, dan tujuan pindah');
 if (/MyDrive/.test(dasbor) || /MyDrive/.test(sumberFiles) || /MyDrive/.test(sumberTrash)) { console.error('  GAGAL  teks "MyDrive" masih tampil ke user'); gagal += 1; }
 else console.log('  ok  tidak ada teks "MyDrive" yang tampil ke user');
+// Status server di header: dulu teks "Uptime X jam · Y digunakan" — dua angka yang membeku begitu
+// halaman dibuka. Sekarang animasi tiga batang tanpa teks; nilainya pindah ke aria-label supaya
+// pembaca layar tetap dapat kabar. Diperiksa dari sumber files.js, bukan dari render, karena
+// bindUploadOptions() baru menyisipkan elemennya saat dashboard hidup (querySelector di uji ini
+// mengembalikan proxy, jadi insertAdjacentHTML tidak menghasilkan markup yang bisa dibaca).
+const awalStatus = sumberFiles.indexOf('class="server-status"');
+const statusServer = sumberFiles.slice(awalStatus, sumberFiles.indexOf('</div>`', awalStatus));
+const statusTanpaLabel = statusServer.replace(/aria-label="[^"]*"/g, '');
+if (awalStatus > 0 && /role="img"/.test(statusServer) && /aria-label="Uptime \$\{/.test(statusServer) && !/Uptime/.test(statusTanpaLabel) && (statusServer.match(/<i><\/i>/g) || []).length === 3) console.log('  ok  status server jadi animasi 3 batang tanpa teks (nilai tetap di aria-label)');
+else { console.error('  GAGAL  status server masih berteks "Uptime" atau markup animasinya tidak lengkap'); gagal += 1; }
 console.log(gagal ? `GAGAL: ${gagal} layar.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

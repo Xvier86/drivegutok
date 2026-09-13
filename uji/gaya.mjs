@@ -107,6 +107,10 @@ cek('kelas baris unggah punya aturan sendiri', ['upl-meta', 'upl-bar', 'upl-fill
 cek('tombol hapus disembunyikan selama unggah', /\.file-card\.is-uploading \.file-delete \{\s*visibility: hidden/.test(cssKomponen));
 cek('keyframes rowIn dan rowKeluar ada', /@keyframes\s+rowIn\s*\{/.test(cssKomponen) && /@keyframes\s+rowKeluar\s*\{/.test(cssKomponen));
 cek('baris .removing memakai animasi keluar', /\.file-card\.removing \{[^}]*animation: rowKeluar/.test(cssKomponen));
+// Status server di header: teks "Uptime X jam · Y digunakan" diganti tiga batang berdenyut. Keyframes-nya
+// ikut diperiksa — animasi tanpa keyframes tidak menghasilkan error apa pun, batangnya hanya diam.
+cek('keyframes denyut-status ada dan dipakai .server-status i', /@keyframes\s+denyut-status\s*\{/.test(cssKomponen) && /\.server-status i \{[^}]*animation:\s*denyut-status/.test(cssKomponen));
+
 cek('tombol unggah mengapung punya aturan .fab', /(^|\n)\.fab \{/.test(cssKomponen));
 cek('bilah unggah tetap terlihat di tab CDN', /\.files-panel\[data-tab="cdn"\] \.file-card\.is-uploading \{ display: grid; \}/.test(baca('assets/styles/views.css')));
 
