@@ -1,7 +1,8 @@
 // Ikon inline: subset lucide-static v0.544.0 (lisensi ISC, https://lucide.dev).
 // Sengaja disalin ke repo, bukan dimuat dari CDN: unpkg lucide penuh ±600 KB dan `@latest`
 // berubah tanpa peringatan, padahal aplikasi hanya memakai 22 ikon.
-// Menambah ikon: jalankan skrip di komentar uji/ikon.mjs lalu tambahkan namanya di bawah.
+// Menambah ikon: salin isi (bagian dalam <svg>) dari lucide-static v0.544.0 ke peta di bawah.
+// uji/gaya.mjs memastikan setiap nama yang dipanggil icon('...') ada di sini.
 const GAMBAR = {
   'arrow-left': '<path d="m12 19-7-7 7-7" /><path d="M19 12H5" />',
   'arrow-right': '<path d="M5 12h14" /><path d="m12 5 7 7-7 7" />',
