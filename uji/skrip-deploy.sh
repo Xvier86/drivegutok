@@ -327,6 +327,20 @@ kasus_deploy_nginx() {
   sed -n '/konfigurasi tidak dipasang/,$p' "$KERJA/nginx-dry2.log" > "$KERJA/konf-dry2.conf"
   cek_ada "DRY: nilai 60 diganti jadi 3600" "proxy_read_timeout 3600;" "$KERJA/konf-dry2.conf"
   cek_sama "DRY: hanya satu direktif proxy_read_timeout" "$(grep -c 'proxy_read_timeout' "$KERJA/konf-dry2.conf")" "1"
+
+  # e) Root asli (uid 0, mis. `sudo bash vps-nginx.sh`) tidak boleh ditolak pemeriksaan sudo.
+  # Perintah `$SUDO -n true` dulu dijalankan juga saat uid 0, jadi yang dieksekusi adalah `-n true`
+  # (perintah tidak ada) dan script berhenti dengan "!! Butuh root" — padahal yang menjalankannya
+  # justru root, sehingga perbaikan Nginx tidak pernah jalan kalau deploy memakai sudo bersandi.
+  # Diuji lewat user namespace (root semu) dengan konfigurasi tetap di fixture, bukan /etc/nginx.
+  if unshare -r true 2>/dev/null; then
+    unshare -r env NGINX_CONF="$NGINX_UJI/gutokdrive.world" DOMAIN=gutokdrive.world PORT=3000 \
+      bash "$DIR_SCRIPT_INPUT/vps-nginx.sh" >"$KERJA/nginx-root.log" 2>&1
+    cek_tidak_ada "uid 0: tidak ditolak 'Butuh root'" "Butuh root" "$KERJA/nginx-root.log"
+    cek_ada "uid 0: script lanjut memeriksa konfigurasi" "Batas upload Nginx Gutok Drive" "$KERJA/nginx-root.log"
+  else
+    echo "   (dilewati: unshare -r tidak tersedia di mesin ini)"
+  fi
 }
 
 # deploy.sh dengan RAPIKAN=1: bersih-vps.sh wajib ikut jalan, tetapi seluruh foldernya diarahkan ke

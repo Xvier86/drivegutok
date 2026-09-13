@@ -37,7 +37,10 @@ info() { printf '  [info]  %s\n' "$*"; }
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
-if [ "$DRY" = "0" ] && ! $SUDO -n true 2>/dev/null; then
+# Root asli (sudo bash vps-nginx.sh) tidak butuh sudo sama sekali: cek `-n true` hanya berlaku
+# kalau $SUDO berisi "sudo". Dulu pemeriksaan ini dijalankan juga saat uid 0, sehingga perintahnya
+# jadi `-n true` (perintah tak ada) -> selalu "!! Butuh root" dan script berhenti di baris ini.
+if [ "$DRY" = "0" ] && [ -n "$SUDO" ] && ! sudo -n true 2>/dev/null; then
   echo "!! Butuh root (sudo tanpa sandi) untuk menulis konfigurasi Nginx dan reload."
   exit 1
 fi
