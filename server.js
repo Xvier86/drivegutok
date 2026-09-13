@@ -636,10 +636,14 @@ app.get('/api/dashboard', requireUser, (req, res) => {
   const folderId = current ? current.id : null;
   const folders = db.prepare('SELECT id, name, parent_id, created_at FROM folders WHERE owner_id = ? AND parent_id IS ? AND deleted_at IS NULL ORDER BY name').all(req.user.id, folderId);
   const files = db.prepare("SELECT id, name, mime_type, size, provider, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at FROM files WHERE owner_id = ? AND folder_id IS ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY uploaded_at DESC").all(req.user.id, folderId, now());
-  const providers = db.prepare("SELECT id, name, kind, enabled, used_bytes, capacity_bytes FROM providers WHERE kind != 'local' ORDER BY name").all();
+  // Dashboard memakai sumber kuota yang sama dengan Owner control supaya angka provider tidak
+  // tertinggal dari kolom `used_bytes` di database. Pembaruan kuota asli berjalan di latar
+  // belakang dengan batas waktu, jadi halaman tidak menunggu provider yang lambat/diblokir.
+  const providers = db.prepare("SELECT * FROM providers WHERE kind != 'local' ORDER BY name").all();
+  for (const provider of providers) refreshCapacityInBackground(provider);
   const stats = db.prepare("SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM files WHERE owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.user.id, now());
   const trashCount = db.prepare('SELECT (SELECT COUNT(*) FROM files WHERE owner_id = ? AND deleted_at IS NOT NULL) + (SELECT COUNT(*) FROM folders WHERE owner_id = ? AND deleted_at IS NOT NULL) AS count').get(req.user.id, req.user.id).count;
-  return json(res, { folders, files, providers, stats, folderId, path: folderPath(req.user.id, folderId), trashCount, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) });
+  return json(res, { folders, files, providers: providers.map(providerStatusForView), stats, folderId, path: folderPath(req.user.id, folderId), trashCount, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) });
 });
 app.post('/api/folders', requireUser, (req, res) => {
   const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';

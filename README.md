@@ -247,7 +247,7 @@ Semua beban berat (TLS, kompresi, cache, hooking file besar) sengaja di luar Nod
 
 ## 8. Setup Provider melalui Dashboard
 
-Login sebagai Owner, buka `Owner control`, lalu konfigurasi provider.
+Login sebagai Owner, buka `Owner control`, lalu konfigurasi provider. Kartu **Drive Storage** di dashboard menampilkan akumulasi pemakaian semua provider (batang bertumpuk + rincian per provider), jadi kuota provider terlihat tanpa membuka `Owner control`. Angka di kedua tempat berasal dari sumber yang sama: `/api/dashboard` dan `/api/admin/overview` sama-sama memakai nilai tersimpan lalu menyegarkan kuota asli di latar belakang (kegagalan disimpan sementara, jadi provider yang diblokir tidak dipanggil ulang setiap menit).
 
 ### Google Drive
 

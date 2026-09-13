@@ -122,6 +122,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
   flex-wrap: wrap;
   gap: var(--space-1);
   opacity: 0;
+  transform: translateY(2px);
+  transition: opacity var(--motion), transform var(--motion);
+}
 
 /* Provider, status, dan angka */
 .provider { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
@@ -141,7 +144,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .user-menu small { display: block; color: var(--muted); }
 
 .progress { position: relative; height: 6px; border-radius: var(--radius-pill); background: var(--line-soft); overflow: hidden; }
-.progress span { display: block; height: 100%; background: var(--gold); }
+.progress span { display: block; height: 100%; background: var(--gold); transform-origin: left; animation: tumbuh 0.9s var(--motion) backwards; }
 
 .breadcrumb { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; color: var(--muted); font-size: 12px; }
 .breadcrumb .crumb { background: none; border: 0; padding: 0; color: var(--muted-strong); font: inherit; cursor: pointer; }
@@ -190,11 +193,35 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 
 .admin-card { display: grid; gap: var(--space-2); }
 
+/* Accumulasi Drive Storage: satu batang bertumpuk untuk semua provider, lalu rincian
+   per provider dengan bilah sendiri. Semua bilah tumbuh dari kiri sekali per render. */
+.storage-card .panel-heading { margin-bottom: var(--space-2); }
+.storage-card h3 { display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); }
+.storage-bar { display: flex; gap: 2px; height: 12px; border-radius: var(--radius-pill); background: var(--line-soft); overflow: hidden; }
+.storage-seg { --seg: 0%; flex: none; width: var(--seg); background: var(--gold); transform-origin: left; animation: tumbuh 0.9s var(--motion) backwards; }
+.storage-seg:nth-child(2) { background: var(--gold-bright); animation-delay: 0.06s; }
+.storage-seg:nth-child(3) { background: var(--gold-dark); animation-delay: 0.12s; }
+.storage-seg:nth-child(4) { background: var(--muted-strong); animation-delay: 0.18s; }
+.storage-seg:nth-child(5) { background: var(--muted); animation-delay: 0.24s; }
+.storage-list { display: grid; gap: var(--space-2); }
+.storage-item { display: grid; gap: var(--space-1); padding: var(--space-2) 0; border-bottom: 1px solid var(--line-soft); }
+.storage-item:last-child { border-bottom: 0; }
+.storage-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; }
+.storage-pct { color: var(--gold-bright); font-size: 12px; flex: none; }
+.storage-empty { padding: var(--space-4); border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted); font-size: 12px; text-align: center; }
+
+/* Grid kartu di Owner control: provider dan member sejajar dalam kolom otomatis. */
+.provider-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: var(--space-3); }
+.member-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: var(--space-3); }
+.provider-grid .provider, .member-grid .provider { padding: var(--space-4); border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--panel-soft); }
+.provider-grid .provider { flex-direction: column; align-items: stretch; gap: var(--space-3); }
+.provider-grid .provider .action-row { justify-content: flex-start; }
+.provider-grid .provider-meta { max-width: none; }
+
+@keyframes tumbuh { from { transform: scaleX(0); } }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 
-  transform: translateY(2px);
-  transition: opacity var(--motion), transform var(--motion);
-}
 .file-card:hover .card-actions,
 .file-card:focus-within .card-actions { opacity: 1; transform: none; }
 @media (hover: none) { .card-actions { opacity: 1; transform: none; } }

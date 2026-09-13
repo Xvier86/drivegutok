@@ -45,6 +45,28 @@ for (const berkas of berkasJs) {
 cek('tidak ada inline style statis', inline.length === 0);
 inline.forEach((baris) => console.error(`        ${baris}`));
 
+// Struktur CSS: kurung seimbang dan tidak ada selector bersarang di dalam blok deklarasi.
+// Bug nyata: `.card-actions {` lupa ditutup di components.css, sehingga `.provider`, `.stats`,
+// `.progress`, `.modal-backdrop`, `.toast`, `.loading-overlay`, dan `.admin-card` semuanya
+// menjadi nested rule — hanya berlaku di dalam `.card-actions`, dan browser yang tidak mendukung
+// CSS nesting membuangnya seluruhnya. Akibatnya modal Owner control tampil tanpa overlay (tombol
+// konfigurasi/invite seolah tidak bisa dipakai) dan bilah provider di dashboard tidak terlihat.
+const rusak = [];
+for (const berkas of berkasCss) {
+  let kedalaman = 0;
+  for (const [index, baris] of baca(berkas).replace(/\/\*[\s\S]*?\*\//g, '').split('\n').entries()) {
+    const teks = baris.trim();
+    if (kedalaman > 0 && /^\S[^{}]*\{\s*$/.test(teks) && !teks.startsWith('@')) rusak.push(`${berkas}:${index + 1} selector bersarang: ${teks}`);
+    kedalaman += (baris.match(/\{/g) || []).length - (baris.match(/\}/g) || []).length;
+  }
+  if (kedalaman !== 0) rusak.push(`${berkas}: kurung tidak seimbang (${kedalaman})`);
+}
+cek('struktur CSS: kurung seimbang dan tanpa selector bersarang', rusak.length === 0);
+rusak.forEach((baris) => console.error(`        ${baris}`));
+
+// Bilah storage wajib tumbuh (bukan muncul mendadak). Dipakai .storage-seg dan .progress span.
+cek('keyframes tumbuh untuk bilah storage ada', berkasCss.some((berkas) => /@keyframes\s+tumbuh\s*\{/.test(baca(berkas))));
+
 const token = new Set([...berkasCss.map((berkas) => baca(berkas)).join('\n').matchAll(/--([a-z0-9-]+)\s*:/g)].map((m) => m[1]));
 const dipakaiToken = new Set();
 for (const berkas of [...berkasJs, ...berkasCss]) {
