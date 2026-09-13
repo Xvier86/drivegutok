@@ -40,9 +40,14 @@ for (const fungsi of ['kirimMultipart', 'uploadToTelegram', 'uploadToGoogleDrive
   cek(`${fungsi} mengalirkan file, tidak memuat ke RAM`, badan.length > 0 && !/readFileSync|Buffer\.concat/.test(badan) && (fungsi !== 'kirimMultipart' || /createReadStream/.test(badan)));
 }
 cek('SQLite dibatasi untuk VPS kecil', /pragma\('synchronous = NORMAL'\)/.test(sumber) && /pragma\('busy_timeout/.test(sumber) && /pragma\('cache_size/.test(sumber));
-// Batas memori PM2 harus ada, karena inilah jaring pengaman terakhir di VPS 1 GB.
+// Batas memori PM2 harus ada di DUA jalur: `node_args` (command line) dan `NODE_OPTIONS`
+// (variabel lingkungan). Sebagian versi PM2 hanya meneruskan salah satunya, dan kegagalannya
+// diam-diam: deploy tetap melaporkan sukses walau batas heap tidak terpasang.
 const pm2 = fs.readFileSync(path.join(root, 'ecosystem.config.cjs'), 'utf8');
-cek('PM2 punya batas heap + restart memori', /max-old-space-size=\d+/.test(pm2) && /max_memory_restart/.test(pm2));
+cek('PM2 punya batas heap (node_args + NODE_OPTIONS) + restart memori', /node_args: '--max-old-space-size=\d+'/.test(pm2) && /NODE_OPTIONS: '--max-old-space-size=\d+'/.test(pm2) && /max_memory_restart/.test(pm2));
+// Script deploy wajib memeriksa environ juga, bukan hanya cmdline.
+const deploy = `${fs.readFileSync(path.join(root, 'deploy.sh'), 'utf8')}${fs.readFileSync(path.join(root, 'redeploy.sh'), 'utf8')}`;
+cek('script deploy membaca /proc/<pid>/environ dan cmdline', /cmdline/.test(deploy) && /environ/.test(deploy) && /NODE_OPTIONS/.test(deploy));
 cek('galat berulang dibatasi di log', /LOG_ULANG_MS/.test(sumber) && /function catatMasalah/.test(sumber));
 cek('kegagalan kuota provider tidak dicoba ulang tiap menit', /CAPACITY_ERROR_TTL_MS/.test(sumber));
 

@@ -13,11 +13,15 @@ module.exports = {
     // VPS-nya 1 GB. Heap dibatasi 384 MB supaya Node tidak menggelembung sampai memicu OOM
     // killer (yang membunuh proses lain juga); max_memory_restart adalah jaring pengaman terakhir
     // kalau RSS tetap naik karena kebocoran memori.
+    // Dua-duanya dipasang karena PM2 pada sebagian VPS hanya meneruskan `node_args` lewat
+    // variabel lingkungan NODE_OPTIONS, bukan ke command line. Cek buktinya:
+    //   tr '\0' '\n' < /proc/$(pgrep -f 'gutok-drive/server.js' | head -1)/environ | grep NODE_OPTIONS
     node_args: '--max-old-space-size=384',
     max_memory_restart: '500M',
     env: {
       NODE_ENV: 'production',
       PORT: 3000,
+      NODE_OPTIONS: '--max-old-space-size=384',
 
       // WAJIB sama persis dengan yang dipakai saat setup pertama. Kalau value ini beda,
       // semua config provider (token/password) yang tersimpan terenkripsi di SQLite

@@ -57,10 +57,12 @@ else
   echo "!! Aplikasi belum merespons di port ${PORT}. Cek log di bawah."
 fi
 # Bukti flag heap benar-benar terpakai di proses yang berjalan, bukan hanya tersimpan di config PM2.
+# Sebagian versi PM2 menaruh `node_args` di command line, sebagian di NODE_OPTIONS: dua-duanya dicek.
 PROSES=$(pgrep -f "$APP_DIR/server.js" 2>/dev/null | head -1) || true
 CMDLINE=$(tr '\0' ' ' < "/proc/${PROSES:-0}/cmdline" 2>/dev/null || true)
-case "$CMDLINE" in
-  *max-old-space-size*) echo ">> Flag heap terpakai: $CMDLINE" ;;
+ENVIRON=$(tr '\0' '\n' < "/proc/${PROSES:-0}/environ" 2>/dev/null | grep '^NODE_OPTIONS=' || true)
+case "${CMDLINE}${ENVIRON}" in
+  *max-old-space-size*) echo ">> Flag heap terpakai: ${CMDLINE}${ENVIRON}" ;;
   *) echo "!! Proses berjalan tanpa flag heap dari ecosystem.config.cjs: ${CMDLINE:-tidak terbaca}" ;;
 esac
 
