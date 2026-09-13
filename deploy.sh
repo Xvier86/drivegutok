@@ -67,7 +67,11 @@ APP_DIR="$APP_DIR" BRANCH="$BRANCH" bash "$UPDATE_CODE"
 
 npm ci --omit=dev
 
-pm2 restart ecosystem.config.cjs --update-env
+# `pm2 restart` tidak menerapkan ulang `node_args` dari ecosystem.config.cjs: flag heap baru masuk
+# ke command line saat proses dibuat. Aplikasi sudah dihentikan di langkah sebelumnya, jadi proses
+# dibuat ulang (tanpa tambahan downtime) supaya konfigurasi di repo ini pasti terpakai.
+pm2 delete gutok-drive >/dev/null 2>&1 || true
+pm2 start ecosystem.config.cjs
 pm2 save
 
 # Pastikan aplikasi benar-benar hidup sebelum lapor selesai.
@@ -86,6 +90,14 @@ else
   echo "!! Aplikasi belum merespons di port ${PORT}. Cek log di bawah, lalu jalankan ulang"
   echo "!! deploy.sh atau rollback ke commit sebelumnya (lihat README bagian 11)."
 fi
+
+# Bukti flag heap benar-benar terpakai di proses yang berjalan, bukan hanya tersimpan di config PM2.
+PROSES=$(pgrep -f "$APP_DIR/server.js" 2>/dev/null | head -1) || true
+CMDLINE=$(tr '\0' ' ' < "/proc/${PROSES:-0}/cmdline" 2>/dev/null || true)
+case "$CMDLINE" in
+  *max-old-space-size*) echo ">> Flag heap terpakai: $CMDLINE" ;;
+  *) echo "!! Proses berjalan tanpa flag heap dari ecosystem.config.cjs: ${CMDLINE:-tidak terbaca}" ;;
+esac
 
 curl -I "http://127.0.0.1:${PORT}/" || true
 pm2 logs gutok-drive --lines 50 --nostream

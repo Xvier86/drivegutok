@@ -235,7 +235,7 @@ kasus_deploy() {
     bad "backup tidak memuat data/mydrive.sqlite"
   fi
   cek_sama "npm ci dijalankan" "$(grep -c 'npm ci --omit=dev' "$LOG_UJI")" "1"
-  cek_ada "pm2 dinyalakan ulang" "pm2 restart ecosystem.config.cjs" "$LOG_UJI"
+  cek_ada "pm2 dibuat ulang dari ecosystem.config.cjs" "pm2 start ecosystem.config.cjs" "$LOG_UJI"
 }
 
 kasus_deploy_merge_gagal() {

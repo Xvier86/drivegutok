@@ -39,7 +39,10 @@
 
 
 
+32. **deploy.sh + redeploy.sh** (`pm2 restart` tidak menerapkan `node_args`): perubahan `ecosystem.config.cjs` dari nomor 30 (`--max-old-space-size=384`) **tidak pernah aktif** di VPS. `pm2 jlist` menunjukkan `"node_args":["--max-old-space-size=384"]` dan `max_memory_restart` ikut berubah (itu dibaca PM2 sendiri saat proses jalan), tetapi `/proc/<pid>/cmdline` masih `node /var/www/gutok-drive/server.js` tanpa flag — flag heap hanya masuk saat proses **dibuat**. Karena itu deploy terlihat sukses sementara batas heapnya tidak terpasang. Kedua script sekarang memakai `pm2 delete` + `pm2 start ecosystem.config.cjs` (bukan `pm2 restart`); ini tidak menambah downtime karena aplikasi memang sudah dihentikan sebelum tarik kode. Keduanya juga mencetak bukti setelah health check: `>> Flag heap terpakai: node --max-old-space-size=384 …`, atau peringatan kalau flag tidak ada. Dua jebakan lain ikut ditutup: `PROSES=$(pgrep … | head -1)` membuat script berhenti dengan `set -o pipefail` saat proses tidak ditemukan (kini `|| true`), dan `uji/skrip-deploy.sh` diperbarui untuk mengharapkan `pm2 start ecosystem.config.cjs` di jalur normal (57 lolos, 0 gagal).
 ## Belum di-touch (bukan bug, tapi perlu keputusan produk — lihat PRD Open Questions)
+
+
 
 
 - Limit ukuran per provider: Telegram sudah dibatasi 50 MB sejak nomor 13. Provider lain masih memakai batas global `MAX_FILE_SIZE` — belum ada batas spesifik per provider.
