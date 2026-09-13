@@ -38,5 +38,8 @@
 
 
 ## Belum di-touch (bukan bug, tapi perlu keputusan produk — lihat PRD Open Questions)
+
+31. **server.js** (`unhandledRejection` + cache kuota provider): akun Mega diblokir membuat megajs melempar `Error: EBLOCKED (-16): User blocked` berulang kali, dan handler `unhandledRejection` mencetak stack lengkap setiap kali — log PM2 tumbuh terus sampai disk VPS 1 GB penuh, padahal isinya sama. Sekarang pesan identik dicetak sekali per `LOG_ULANG_MS` (default 10 menit) dengan jumlah kemunculan yang ditahan, mis. `(37 kemunculan serupa ditahan)`, jadi masalah berulang tetap terlihat sebagai satu baris. Penyebab pengulangannya juga dipotong: kegagalan kuota provider dulu punya masa berlaku sama dengan keberhasilan (60 detik), sehingga provider yang mati dicoba ulang tiap menit; sekarang kegagalan disimpan `PROVIDER_CAPACITY_ERROR_TTL_MS` (default 15 menit). Diuji `uji/ram.mjs`: 5 rejection identik (variabel pemicu `process.emit('unhandledRejection', ...)`) harus menghasilkan tepat 1 baris log, plus penjaga statis untuk kedua konstanta.
+
 - Limit ukuran per provider: Telegram sudah dibatasi 50 MB sejak nomor 13. Provider lain masih memakai batas global `MAX_FILE_SIZE` — belum ada batas spesifik per provider.
 - Kalau nanti mau menghidupkan target deployment lain lagi, mulai dari skema di `server.js` (satu-satunya sumber kebenaran) dan lengkapi dulu share link, folder delete, CDN slug, retention, serta enkripsi sebelum dipakai produksi. Jangan menghidupkan ulang `src/worker.js` apa adanya — skemanya sudah ketinggalan dari `server.js`.

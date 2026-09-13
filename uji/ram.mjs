@@ -43,6 +43,35 @@ cek('SQLite dibatasi untuk VPS kecil', /pragma\('synchronous = NORMAL'\)/.test(s
 // Batas memori PM2 harus ada, karena inilah jaring pengaman terakhir di VPS 1 GB.
 const pm2 = fs.readFileSync(path.join(root, 'ecosystem.config.cjs'), 'utf8');
 cek('PM2 punya batas heap + restart memori', /max-old-space-size=\d+/.test(pm2) && /max_memory_restart/.test(pm2));
+cek('galat berulang dibatasi di log', /LOG_ULANG_MS/.test(sumber) && /function catatMasalah/.test(sumber));
+cek('kegagalan kuota provider tidak dicoba ulang tiap menit', /CAPACITY_ERROR_TTL_MS/.test(sumber));
+
+// --- Penjaga perilaku: galat yang datang berulang hanya boleh muncul sekali di log. ---
+// 5 rejection identik harus menghasilkan 1 baris, bukan 5 — kalau tidak, akun Mega yang diblokir
+// bisa mengisi disk VPS hanya dengan pesan yang sama.
+const kerjaLog = fs.mkdtempSync(path.join(os.tmpdir(), 'uji-log-'));
+fs.copyFileSync(path.join(root, 'server.js'), path.join(kerjaLog, 'server.js'));
+fs.symlinkSync(path.join(root, 'node_modules'), path.join(kerjaLog, 'node_modules'));
+fs.writeFileSync(path.join(kerjaLog, 'picu.mjs'), [
+  "await import('./server.js');",
+  "const galat = new Error('EBLOCKED (-16): User blocked');",
+  'for (let i = 0; i < 5; i += 1) process.emit(\'unhandledRejection\', galat);',
+  'setTimeout(() => process.exit(0), 300);',
+].join('\n'));
+const logRingkas = await new Promise((resolve) => {
+  const picu = spawn(process.execPath, ['picu.mjs'], {
+    cwd: kerjaLog,
+    env: { ...process.env, PORT: '0', NODE_ENV: 'test', STORAGE_CONFIG_KEY: 'kunci-uji', LOG_ULANG_MS: '600000' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let kumpul = '';
+  picu.stdout.on('data', (data) => { kumpul += data; });
+  picu.stderr.on('data', (data) => { kumpul += data; });
+  picu.on('exit', () => resolve(kumpul));
+});
+fs.rmSync(kerjaLog, { recursive: true, force: true });
+const barisGalat = (logRingkas.match(/\[unhandledRejection\]/g) || []).length;
+cek('5 rejection identik hanya dicetak 1 kali', barisGalat === 1, `baris=${barisGalat}`);
 
 if (!fs.existsSync('/proc/self/status')) {
   console.error('Uji RAM butuh Linux (/proc). Dilewati.');

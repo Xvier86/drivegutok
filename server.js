@@ -15,12 +15,27 @@ import { fileURLToPath } from 'node:url';
 // internal yang reject saat akun Mega diblokir (`Error: EBLOCKED (-16): User blocked`). Node 20
 // mematikan proses pada unhandled rejection, jadi tanpa handler ini PM2 me-restart aplikasi
 // berulang kali (crash loop) hanya karena satu provider bermasalah.
-process.on('unhandledRejection', (reason) => {
-  console.error(`[unhandledRejection] aplikasi tetap berjalan: ${reason?.stack || reason?.message || reason}`);
-});
-process.on('uncaughtException', (error) => {
-  console.error(`[uncaughtException] aplikasi tetap berjalan: ${error?.stack || error}`);
-});
+// Kegagalan yang sama datang berulang (megajs melempar lagi tiap kali provider dihubungi) dan dulu
+// dicetak lengkap setiap kali: log PM2 tumbuh cepat dan disk VPS 1 GB penuh, padahal isinya sama.
+// Sekarang pesan identik dicetak sekali per LOG_ULANG_MS, dengan jumlah kemunculan yang ditahan
+// supaya masalah yang benar-benar berulang tetap terlihat sebagai satu baris.
+// ponytail: peta kunci dibatasi 100 entri lalu direset, cukup untuk pesan galat; ganti ke ring
+// buffer kalau nanti perlu riwayat lengkap.
+const LOG_ULANG_MS = Number(process.env.LOG_ULANG_MS || 600000);
+const logMasalah = new Map();
+function catatMasalah(awalan, alasan) {
+  const teks = alasan?.stack || alasan?.message || String(alasan);
+  const kunci = `${awalan} ${teks.split('\n')[0].slice(0, 160)}`;
+  const sebelumnya = logMasalah.get(kunci);
+  const sekarang = Date.now();
+  if (sebelumnya && sekarang - sebelumnya.at < LOG_ULANG_MS) { sebelumnya.tertahan += 1; return; }
+  const tertahan = sebelumnya?.tertahan ? ` (${sebelumnya.tertahan} kemunculan serupa ditahan)` : '';
+  console.error(`${awalan} aplikasi tetap berjalan: ${teks}${tertahan}`);
+  if (logMasalah.size > 100) logMasalah.clear();
+  logMasalah.set(kunci, { at: sekarang, tertahan: 0 });
+}
+process.on('unhandledRejection', (reason) => catatMasalah('[unhandledRejection]', reason));
+process.on('uncaughtException', (error) => catatMasalah('[uncaughtException]', error));
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const startedAt = Date.now();
@@ -206,6 +221,10 @@ async function getGoogleAccessToken(config) {
 // diambil di latar belakang dan dipakai pada permintaan berikutnya. Hasil gagal pun disimpan
 // sementara supaya provider bermasalah tidak dipanggil ulang pada setiap pembukaan halaman.
 const CAPACITY_TTL_MS = Number(process.env.PROVIDER_CAPACITY_TTL_MS || 60000);
+// Kegagalan provider tidak berubah dalam satu menit: akun Mega yang diblokir tetap `EBLOCKED`,
+// token Google yang dicabut tetap ditolak. Mencoba ulang tiap 60 detik berarti login ulang +
+// deretan galat baru di log tanpa ada yang berubah. Kegagalan disimpan PROVIDER_CAPACITY_ERROR_TTL_MS.
+const CAPACITY_ERROR_TTL_MS = Number(process.env.PROVIDER_CAPACITY_ERROR_TTL_MS || 900000);
 const capacityCache = new Map();
 const capacityInFlight = new Set();
 function providerStatusForView(provider) {
@@ -219,7 +238,8 @@ function providerStatusForView(provider) {
 function refreshCapacityInBackground(provider) {
   if (!Number(provider.enabled) || !providerStatus(provider).configured) return;
   const cached = capacityCache.get(provider.id);
-  if (capacityInFlight.has(provider.id) || (cached && Date.now() - cached.at < CAPACITY_TTL_MS)) return;
+  const masaBerlaku = cached?.capacitySource === 'error' ? CAPACITY_ERROR_TTL_MS : CAPACITY_TTL_MS;
+  if (capacityInFlight.has(provider.id) || (cached && Date.now() - cached.at < masaBerlaku)) return;
   capacityInFlight.add(provider.id);
   readProviderCapacity(provider)
     .then((capacity) => capacityCache.set(provider.id, { ...capacity, at: Date.now() }))
