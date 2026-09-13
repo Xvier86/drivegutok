@@ -6,8 +6,11 @@
 # ini tidak punya batas 1 MB (MAX_FILE_SIZE default 5 GB, multer menulis file ke data/tmp), jadi
 # 413 selalu datang dari lapisan proxy — bukan dari server.js.
 #
-# Script ini juga menyalakan gzip untuk aset dan mematikan buffering request body ke disk
-# (VPS 1 GB: tanpa `proxy_request_buffering off`, Nginx menulis ulang seluruh upload ke disk).
+# Script ini juga menyalakan gzip untuk aset, mematikan buffering request body ke disk
+# (VPS 1 GB: tanpa `proxy_request_buffering off`, Nginx menulis ulang seluruh upload ke disk), dan
+# menaikkan `proxy_read_timeout`/`proxy_send_timeout` ke 3600 detik — default Nginx 60 detik memutus
+# unggahan besar (jawaban Telegram datang di detik ke-61..95) dengan 502 padahal aplikasinya masih
+# menunggu, dan berkasnya sudah terlanjur masuk channel sebagai berkas yatim.
 #
 # Uji DRY tanpa nginx/sudo (memeriksa transformasi konfigurasi saja):
 #   NGINX_CONF=/tmp/fixture.conf DRY=1 bash vps-nginx.sh
@@ -62,13 +65,23 @@ ok "konfigurasi: $NGINX_CONF"
 AWAL=$(grep -oE 'client_max_body_size[^;]*;' "$NGINX_CONF" | head -1 || true)
 PERLU_CMB=1; grep -q 'client_max_body_size' "$NGINX_CONF" && PERLU_CMB=0
 PERLU_GZIP=1; grep -qE '^[[:space:]]*gzip[[:space:]]+on' "$NGINX_CONF" && PERLU_GZIP=0
-PERLU_BUF=1; grep -q 'proxy_buffering' "$NGINX_CONF" && PERLU_BUF=0
+# Buffering diuji per direktif, bukan sekali jalan: pola lama `grep 'proxy_buffering'` tidak cocok
+# dengan `proxy_request_buffering`, jadi konfigurasi yang sudah punya `proxy_request_buffering off`
+# tetap dianggap "belum ada" dan kedua direktif itu disisipkan lagi -> duplikat dalam satu blok ->
+# `nginx -t` gagal dan script mengembalikan cadangannya tanpa pernah memperbaiki apa pun.
+PERLU_RB=1; grep -qE '^[[:space:]]*proxy_request_buffering' "$NGINX_CONF" && PERLU_RB=0
+PERLU_PB=1; grep -qE '^[[:space:]]*proxy_buffering' "$NGINX_CONF" && PERLU_PB=0
+# Batas waktu proxy diuji terpisah dari buffering: di VPS nyata `proxy_request_buffering off` sudah
+# dipasang manual tanpa `proxy_read_timeout`, sehingga syarat gabungan lama (perlu_buf) melewatinya
+# dan Nginx tetap memakai default `proxy_read_timeout 60s` — unggahan yang jawabannya (Telegram)
+# baru datang di detik ke-61..95 dijawab 502 oleh Nginx padahal aplikasinya masih menunggu.
+PERLU_TO=1; grep -q 'proxy_read_timeout' "$NGINX_CONF" && PERLU_TO=0
 if [ "$PERLU_CMB" -eq 0 ]; then
   ok "client_max_body_size sudah ada: $AWAL"
 else
   bad "client_max_body_size tidak ada -> Nginx memakai default 1 MB (penyebab 413)"
 fi
-info "gzip on: $([ "$PERLU_GZIP" -eq 0 ] && echo ada || echo belum ada) · proxy_buffering: $([ "$PERLU_BUF" -eq 0 ] && echo ada || echo belum ada)"
+info "gzip on: $([ "$PERLU_GZIP" -eq 0 ] && echo ada || echo belum ada) · proxy_request_buffering: $([ "$PERLU_RB" -eq 0 ] && echo ada || echo belum ada) · proxy_buffering: $([ "$PERLU_PB" -eq 0 ] && echo ada || echo belum ada) · proxy_read_timeout: $([ "$PERLU_TO" -eq 0 ] && echo ada || echo belum ada)"
 
 # --- 2) Sisipkan/ganti direktif -------------------------------------------------
 if [ "$PERLU_CMB" -eq 0 ]; then
@@ -80,7 +93,15 @@ fi
 # Setiap server block mendapat client_max_body_size sendiri. Mengulang direktif ini di blok BERBEDA
 # sah; yang membuat `nginx -t` gagal hanya duplikat dalam satu blok, dan itu tidak terjadi karena
 # penggantian nilai di atas berjalan sekali per baris.
-awk -v min="$MIN_BODY" -v perlu_cmb="$PERLU_CMB" -v perlu_gzip="$PERLU_GZIP" -v perlu_buf="$PERLU_BUF" -v port="$PORT" '
+# Nilai `proxy_read_timeout`/`proxy_send_timeout` yang sudah ada dinormalkan, bukan disisipkan ulang:
+# dua direktif kembar di dalam satu blok membuat `nginx -t` gagal.
+if [ "$PERLU_TO" -eq 0 ]; then
+  sed -E 's/proxy_read_timeout[^;]*;/proxy_read_timeout 3600;/g; s/proxy_send_timeout[^;]*;/proxy_send_timeout 3600;/g' "$KERJA/1.conf" > "$KERJA/1b.conf"
+else
+  cp "$KERJA/1.conf" "$KERJA/1b.conf"
+fi
+
+awk -v min="$MIN_BODY" -v perlu_cmb="$PERLU_CMB" -v perlu_gzip="$PERLU_GZIP" -v perlu_rb="$PERLU_RB" -v perlu_pb="$PERLU_PB" -v perlu_to="$PERLU_TO" -v port="$PORT" '
   { print }
   perlu_cmb == 1 && $0 ~ /^[[:space:]]*server[[:space:]]*\{[[:space:]]*$/ {
     print "    client_max_body_size " min ";"
@@ -95,13 +116,15 @@ awk -v min="$MIN_BODY" -v perlu_cmb="$PERLU_CMB" -v perlu_gzip="$PERLU_GZIP" -v 
     print "    gzip_types text/css application/javascript application/json image/svg+xml;"
     print "    gzip_min_length 1024;"
   }
-  perlu_buf == 1 && $0 ~ ("proxy_pass[[:space:]]+http://127\\.0\\.0\\.1:" port) {
-    print "        proxy_request_buffering off;"
-    print "        proxy_buffering off;"
-    print "        proxy_read_timeout 3600;"
-    print "        proxy_send_timeout 3600;"
+  (perlu_rb == 1 || perlu_pb == 1 || perlu_to == 1) && $0 ~ ("proxy_pass[[:space:]]+http://127\\.0\\.0\\.1:" port) {
+    if (perlu_rb == 1) print "        proxy_request_buffering off;"
+    if (perlu_pb == 1) print "        proxy_buffering off;"
+    if (perlu_to == 1) {
+      print "        proxy_read_timeout 3600;"
+      print "        proxy_send_timeout 3600;"
+    }
   }
-' "$KERJA/1.conf" > "$KERJA/baru.conf"
+' "$KERJA/1b.conf" > "$KERJA/baru.conf"
 
 if ! grep -q 'proxy_pass' "$KERJA/baru.conf"; then
   info "tidak ada proxy_pass di berkas ini — pastikan blok location / memang ada di konfigurasi lain."
@@ -170,6 +193,14 @@ if $SUDO nginx -T 2>/dev/null | grep -q "client_max_body_size $MIN_BODY;"; then
   ok "nginx -T memakai client_max_body_size $MIN_BODY"
 else
   bad "nginx -T belum menunjukkan client_max_body_size $MIN_BODY"
+fi
+
+# Bukti batas waktu proxy benar-benar terpasang di blok yang melayani aplikasi: default Nginx 60s
+# memutus unggahan besar tepat saat aplikasi masih menunggu jawaban Telegram (502 dari Nginx).
+if $SUDO nginx -T 2>/dev/null | grep -q 'proxy_read_timeout 3600;'; then
+  ok "nginx -T memakai proxy_read_timeout 3600 (unggahan lambat tidak diputus proxy)"
+else
+  bad "nginx -T belum menunjukkan proxy_read_timeout 3600 — unggahan >60 detik masih bisa dijawab 502 oleh Nginx"
 fi
 
 ENKODING=$(curl -sS -o /dev/null -D - -H 'Accept-Encoding: gzip' "http://127.0.0.1:$PORT/styles/components.css" 2>/dev/null | grep -i '^content-encoding' | head -1 || true)

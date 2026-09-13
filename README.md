@@ -106,7 +106,7 @@ PORT=3000
 STORAGE_CONFIG_KEY=ganti-dengan-secret-acak-minimal-32-karakter
 MAX_FILE_SIZE=5368709120
 TRASH_RETENTION_DAYS=30
-UPLOAD_IDLE_TIMEOUT_MS=60000
+UPLOAD_IDLE_TIMEOUT_MS=95000
 ```
 
 Generate secret:
@@ -116,7 +116,7 @@ openssl rand -base64 48
 ```
 
 `STORAGE_CONFIG_KEY` wajib stabil. Jika berubah, credential provider yang tersimpan terenkripsi tidak bisa didekripsi lagi. `TRASH_RETENTION_DAYS` mengatur berapa hari item di Sampah disimpan sebelum dibersihkan otomatis (default 30); nilai `0` membuat item dibersihkan begitu menu Sampah dibuka.
-`UPLOAD_IDLE_TIMEOUT_MS` (default 60000) adalah batas waktu **diamnya soket** saat mengirim berkas ke provider: kalau Telegram sudah menerima seluruh berkas lalu berhenti menjawab, permintaan dijawab `502` dengan pesan yang jelas alih-alih menggantung sampai Cloudflare memutusnya di 100 detik (`524`) tanpa baris database dan tanpa catatan log. Naikkan nilainya hanya kalau providernya memang lambat menjawab setelah berkas terkirim.
+`UPLOAD_IDLE_TIMEOUT_MS` (default 95000) adalah batas waktu **diamnya soket** saat mengirim berkas ke provider: kalau Telegram sudah menerima seluruh berkas lalu berhenti menjawab, permintaan dijawab `502` dengan pesan yang jelas alih-alih menggantung sampai Cloudflare memutusnya di 100 detik (`524`) tanpa baris database dan tanpa catatan log. Nilai defaultnya 95 detik karena lama jawaban Telegram tumbuh seiring ukuran berkas (terukur di VPS: 3 MB selesai di detik ke-35, 5 MB baru di detik ke-60) — batas 60 detik membuang unggahan yang sebenarnya berhasil di detik ke-61..95 sambil meninggalkan berkas yatim di channel. Jangan naikkan melewati 100000: di atas itu Cloudflare sudah lebih dulu memutus klien, dan pesannya berubah jadi halaman `524`. Batas ini hanya berlaku untuk soket yang diam; unggahan besar yang datanya terus mengalir tidak terpengaruh. Batas Nginx (`proxy_read_timeout`, lihat `vps-nginx.sh`) harus lebih longgar dari nilai ini supaya yang menjawab galat adalah aplikasi, bukan proxy.
 Semua variabel di atas sudah tersedia di `.env.example`. `setup.sh` menyalinnya menjadi `.env` dan mengisi `STORAGE_CONFIG_KEY` otomatis dengan hasil `openssl rand -base64 48`; `ecosystem.config.cjs` ikut disuntik nilai yang sama supaya PM2 memakai secret yang identik.
 
 Jangan menaruh token Telegram, password Mega, private key Google, atau API key di Git. Credential provider dimasukkan melalui panel Owner dan disimpan terenkripsi di SQLite.
@@ -372,7 +372,7 @@ Kalau "Nginx lokal" lulus 401 tapi URL publik masih 413, batasnya ada di Cloudfl
 
 Berkas ada di channel Telegram, tetapi tidak ada di daftar file dan log PM2 bersih. Ada dua sebab:
 
-1. **Permintaan ke provider menggantung setelah berkas terkirim** (sejak nomor 43 di `FIXES.md`, ini sudah dibatasi). `kirimMultipart()` mengirim badan multipart lalu menunggu jawaban; kalau Telegram menerima seluruh berkas tetapi jawabannya tidak pernah datang (soket mati tanpa FIN, `api.telegram.org` tersendat dari VPS), permintaan dulu menggantung tanpa batas waktu dan tidak mencatat apa pun — Cloudflare memutus klien di **100 detik** (`524`, atau `499` di log Nginx), berkas sudah ada di channel, baris database tidak pernah dibuat. Sekarang soket punya batas inaktivitas (`UPLOAD_IDLE_TIMEOUT_MS`, default 60000 ms) sehingga permintaan dijawab `502` dan dicatat sebagai `[upload] telegram gagal (...): Provider tidak menjawab ...` di `pm2 logs gutok-drive --err`. Batas ini hanya berlaku untuk soket yang diam; unggahan besar yang datanya terus mengalir tidak terpengaruh.
+1. **Permintaan ke provider menggantung setelah berkas terkirim** (sejak nomor 43 di `FIXES.md`, ini sudah dibatasi). `kirimMultipart()` mengirim badan multipart lalu menunggu jawaban; kalau Telegram menerima seluruh berkas tetapi jawabannya tidak pernah datang (soket mati tanpa FIN, `api.telegram.org` tersendat dari VPS), permintaan dulu menggantung tanpa batas waktu dan tidak mencatat apa pun — Cloudflare memutus klien di **100 detik** (`524`, atau `499` di log Nginx), berkas sudah ada di channel, baris database tidak pernah dibuat. Sekarang soket punya batas inaktivitas (`UPLOAD_IDLE_TIMEOUT_MS`, default 95000 ms) sehingga permintaan dijawab `502` dan dicatat sebagai `[upload] telegram gagal setelah 63.4s (namafile.mp4, 5298094 byte): Provider tidak menjawab ...` di `pm2 logs gutok-drive --err`. Angka `setelah Xs` itu yang menentukan diagnosa: kalau mendekati 60 detik, waktu tunggu Telegram yang kurang (nomor 45 di `FIXES.md` — pastikan `proxy_read_timeout` Nginx juga sudah 3600, kalau tidak yang menjawab 502 adalah Nginx dan aplikasi tidak sempat mencatat apa pun); kalau mendekati 95 detik, batas aplikasi yang perlu dinaikkan atau berkasnya perlu lewat domain DNS-only. Batas ini hanya berlaku untuk soket yang diam; unggahan besar yang datanya terus mengalir tidak terpengaruh.
 2. **Batas 100 detik Cloudflare pada paket gratis** (unggahan besar yang memang lambat, mis. puluhan MB dari ponsel). `proxy_request_buffering off` di Nginx (dipasang `vps-nginx.sh`) memangkas waktu yang terbuang sebelum unggahan diteruskan, tetapi total waktu masih bisa lewat.
 
 Periksa berurutan:

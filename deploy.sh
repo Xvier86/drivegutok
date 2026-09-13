@@ -116,30 +116,33 @@ case "${CMDLINE}${ENVIRON}${PM2_ENV}" in
 esac
 
 # Nginx: tanpa `client_max_body_size`, Nginx menjawab 413 untuk body >1 MB SEBELUM Express melihatnya
-# (aplikasi ini sendiri tidak punya batas 1 MB, lihat README bagian 11). Dua direktif lain dari
+# (aplikasi ini sendiri tidak punya batas 1 MB, lihat README bagian 11). Direktif lain dari
 # vps-nginx.sh diuji di sini juga, karena di VPS nyata `client_max_body_size` sudah dipasang manual
-# sehingga syarat lama ("belum ada") tidak pernah terpenuhi: `gzip on` membuat aset dikompres, dan
+# sehingga syarat lama ("belum ada") tidak pernah terpenuhi: `gzip on` membuat aset dikompres,
 # `proxy_request_buffering off` mencegah Nginx menulis ulang seluruh upload ke disk dulu (di VPS kecil
-# itu berarti pemakaian disk dua kali + timeout pada file besar).
+# itu berarti pemakaian disk dua kali + timeout pada file besar), dan `proxy_read_timeout` menaikkan
+# batas proxy dari default 60 detik — di bawah 60 detik Nginx menjawab 502 untuk unggahan yang
+# jawaban Telegramnya baru datang di detik ke-61..95 padahal aplikasinya masih menunggu.
 # Diparametrikan supaya bisa diuji (uji/skrip-deploy.sh) tanpa menyentuh /etc/nginx.
 NGINX_DIR="${NGINX_DIR:-/etc/nginx/sites-enabled}"
 NGINX_CONF_D="${NGINX_CONF_D:-/etc/nginx/conf.d}"
 NGINX_MAIN="${NGINX_MAIN:-/etc/nginx/nginx.conf}"
 NGINX_KURANG=0
 if [ -d "$NGINX_DIR" ] || [ -d "$NGINX_CONF_D" ]; then
-  for pola in 'client_max_body_size' '^[[:space:]]*gzip[[:space:]]+on' 'proxy_request_buffering'; do
+  for pola in 'client_max_body_size' '^[[:space:]]*gzip[[:space:]]+on' 'proxy_request_buffering' 'proxy_read_timeout'; do
     grep -rEsq "$pola" "$NGINX_DIR" "$NGINX_CONF_D" "$NGINX_MAIN" 2>/dev/null || NGINX_KURANG=1
   done
 fi
 
 if [ "$NGINX_KURANG" -eq 1 ]; then
   if [ -f "$APP_DIR/vps-nginx.sh" ] && { [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; }; then
-    echo ">> Nginx belum lengkap (batas upload / gzip / buffering) — memperbaiki dengan vps-nginx.sh..."
+    echo ">> Nginx belum lengkap (batas upload / gzip / buffering / batas waktu proxy) — memperbaiki dengan vps-nginx.sh..."
     SUDO_CMD=""; [ "$(id -u)" -ne 0 ] && SUDO_CMD="sudo -n"
     APP_DIR="$APP_DIR" $SUDO_CMD bash "$APP_DIR/vps-nginx.sh" || echo "!! vps-nginx.sh melaporkan masalah; lihat output di atas"
   else
-    echo "!! Konfigurasi Nginx belum lengkap (batas upload / gzip / buffering): upload di atas 1 MB"
-    echo "!! bisa dijawab 413 dan aset tidak dikompres. Jalankan sekali: sudo bash $APP_DIR/vps-nginx.sh"
+    echo "!! Konfigurasi Nginx belum lengkap (batas upload / gzip / buffering / batas waktu proxy):"
+    echo "!! upload di atas 1 MB bisa dijawab 413, aset tidak dikompres, dan unggahan yang jawabannya"
+    echo "!! baru datang di detik ke-61..95 dijawab 502 oleh Nginx. Jalankan sekali: sudo bash $APP_DIR/vps-nginx.sh"
   fi
 fi
 

@@ -296,12 +296,37 @@ kasus_deploy_nginx() {
   cek_ada "log: kegagalan vps-nginx.sh hanya dilaporkan" "vps-nginx.sh melaporkan masalah" "$KERJA/out.log"
   cek_sama "md5 DB produksi utuh" "$(md5_berkas "$APP/data/mydrive.sqlite")" "$MD5_DB"
 
-  # b) Ketiga direktif sudah ada -> deploy tidak menyentuh Nginx lagi.
-  printf 'server {\n  server_name gutokdrive.world;\n  client_max_body_size 5G;\n  gzip on;\n  location / { proxy_pass http://127.0.0.1:3000; proxy_request_buffering off; }\n}\n' > "$NGINX_UJI/gutokdrive.world"
+  # b) Keempat direktif sudah ada -> deploy tidak menyentuh Nginx lagi.
+  printf 'server {\n  server_name gutokdrive.world;\n  client_max_body_size 5G;\n  gzip on;\n  location / {\n    proxy_pass http://127.0.0.1:3000;\n    proxy_request_buffering off;\n    proxy_buffering off;\n    proxy_read_timeout 3600;\n  }\n}\n' > "$NGINX_UJI/gutokdrive.world"
   PATH="$BIN:$PATH" CURL_OK=1 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 RAPIKAN=0 env "${NGINX_ENV[@]}" \
     bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out2.log" 2>&1
   cek_sama "exit" "$?" "0"
   cek_tidak_ada "Nginx lengkap: vps-nginx.sh tidak dipanggil" "Nginx belum lengkap" "$KERJA/out2.log"
+
+  # c) Kondisi VPS nyata 13 Sep 2026: batas upload + gzip + `proxy_request_buffering off` sudah ada,
+  # tetapi `proxy_read_timeout` tidak (default Nginx 60 detik -> unggahan besar dijawab 502 oleh Nginx
+  # walau aplikasi masih menunggu Telegram). Syarat gabungan lama melewati kasus ini.
+  printf 'server {\n  server_name gutokdrive.world;\n  client_max_body_size 5G;\n  gzip on;\n  location / {\n    proxy_pass http://127.0.0.1:3000;\n    proxy_request_buffering off;\n    proxy_buffering off;\n  }\n}\n' > "$NGINX_UJI/gutokdrive.world"
+  PATH="$BIN:$PATH" CURL_OK=1 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 RAPIKAN=0 env "${NGINX_ENV[@]}" \
+    bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out3.log" 2>&1
+  cek_sama "exit" "$?" "0"
+  cek_ada "tanpa proxy_read_timeout: Nginx dianggap belum lengkap" "Nginx belum lengkap" "$KERJA/out3.log"
+
+  # d) Transformasi vps-nginx.sh sendiri (DRY=1: tanpa sudo dan tanpa nginx). Dua hal diuji:
+  # direktif batas waktu tetap disisipkan walau buffering sudah mati, dan nilai lama yang kecil
+  # DIGANTI (bukan disisipkan sebagai direktif kembar — itu membuat `nginx -t` gagal).
+  DRY=1 NGINX_CONF="$NGINX_UJI/gutokdrive.world" DOMAIN=gutokdrive.world PORT=3000 \
+    bash "$DIR_SCRIPT_INPUT/vps-nginx.sh" >"$KERJA/nginx-dry.log" 2>&1
+  sed -n '/konfigurasi tidak dipasang/,$p' "$KERJA/nginx-dry.log" > "$KERJA/konf-dry.conf"
+  cek_ada "DRY: proxy_read_timeout disisipkan" "proxy_read_timeout 3600;" "$KERJA/konf-dry.conf"
+  cek_ada "DRY: proxy_send_timeout disisipkan" "proxy_send_timeout 3600;" "$KERJA/konf-dry.conf"
+  cek_sama "DRY: proxy_request_buffering yang sudah ada tidak digandakan" "$(grep -c 'proxy_request_buffering' "$KERJA/konf-dry.conf")" "1"
+  printf 'server {\n  server_name gutokdrive.world;\n  client_max_body_size 5G;\n  gzip on;\n  location / {\n    proxy_pass http://127.0.0.1:3000;\n    proxy_request_buffering off;\n    proxy_buffering off;\n    proxy_read_timeout 60;\n  }\n}\n' > "$NGINX_UJI/gutokdrive.world"
+  DRY=1 NGINX_CONF="$NGINX_UJI/gutokdrive.world" DOMAIN=gutokdrive.world PORT=3000 \
+    bash "$DIR_SCRIPT_INPUT/vps-nginx.sh" >"$KERJA/nginx-dry2.log" 2>&1
+  sed -n '/konfigurasi tidak dipasang/,$p' "$KERJA/nginx-dry2.log" > "$KERJA/konf-dry2.conf"
+  cek_ada "DRY: nilai 60 diganti jadi 3600" "proxy_read_timeout 3600;" "$KERJA/konf-dry2.conf"
+  cek_sama "DRY: hanya satu direktif proxy_read_timeout" "$(grep -c 'proxy_read_timeout' "$KERJA/konf-dry2.conf")" "1"
 }
 
 # deploy.sh dengan RAPIKAN=1: bersih-vps.sh wajib ikut jalan, tetapi seluruh foldernya diarahkan ke

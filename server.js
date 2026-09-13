@@ -252,7 +252,12 @@ function refreshCapacityInBackground(provider) {
 // provider memakai fungsi ini, bukan fetch/FormData.
 // Batas waktu inaktivitas soket (ms) saat mengirim berkas ke provider. Data yang terus mengalir
 // tidak kena; yang dihentikan hanya provider yang diam setelah badan request terkirim.
-const UPLOAD_IDLE_TIMEOUT_MS = Number(process.env.UPLOAD_IDLE_TIMEOUT_MS || 60000);
+// Default 95 detik, bukan 60: waktu jawaban Telegram tumbuh seiring ukuran berkas (terukur di VPS:
+// 3 MB lolos, 5 MB gagal di detik ke-60), sedangkan Cloudflare memutus permintaan di 100 detik.
+// Menunggu 60 detik membuang unggahan yang sebenarnya berhasil di detik ke-61..95 sambil
+// meninggalkan berkas yatim di channel. Batas ini juga harus lebih pendek dari batas Cloudflare
+// supaya klien menerima pesan galat yang jelas, bukan halaman 524.
+const UPLOAD_IDLE_TIMEOUT_MS = Number(process.env.UPLOAD_IDLE_TIMEOUT_MS || 95000);
 function kirimMultipart({ url, headers = {}, bagian }) {
   const panjang = bagian.reduce((total, item) => total + (item.buffer ? item.buffer.length : item.size), 0);
   const alamat = new URL(url);
@@ -791,6 +796,7 @@ app.post('/api/files', requireUser, upload.single('file'), async (req, res) => {
   // Membedakan "provider gagal" dari "klien sudah pergi" penting saat membaca log: Cloudflare
   // memutus permintaan di 100 detik, dan tanpa penanda ini penyebabnya tidak bisa dipisahkan.
   let dibatalkan = false;
+  const mulaiUnggah = Date.now();
   res.on('close', () => { if (!res.writableEnded) dibatalkan = true; });
   try {
     const uploaded = await uploadToProvider(uploadFile, provider, safeName(name), mimeType);
@@ -800,7 +806,7 @@ app.post('/api/files', requireUser, upload.single('file'), async (req, res) => {
     db.prepare('INSERT INTO files (id, owner_id, folder_id, name, mime_type, size, provider, remote_file_id, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(record.id, record.owner_id, record.folder_id, record.name, record.mime_type, record.size, record.provider, record.remote_file_id, record.uploaded_by, record.uploaded_at, record.cdn_enabled, record.cdn_slug, record.encrypted, record.retention_type, record.retention_value, record.expires_at);
     db.prepare('UPDATE providers SET used_bytes = used_bytes + ? WHERE id = ?').run(record.size, provider.id); audit(req.user.id, 'upload', 'file', record.id); return json(res, record, 201);
   } catch (error) {
-    console.error(`[upload] ${provider.kind} gagal${dibatalkan ? ' (klien memutus permintaan)' : ''} (${safeName(name)}, ${size} byte): ${error.message}`);
+    console.error(`[upload] ${provider.kind} gagal${dibatalkan ? ' (klien memutus permintaan)' : ''} setelah ${((Date.now() - mulaiUnggah) / 1000).toFixed(1)}s (${safeName(name)}, ${size} byte): ${error.message}`);
     return json(res, { error: `Upload ${provider.kind} gagal: ${error.message}` }, 502);
   }
   finally { fs.rmSync(file.path, { force: true }); if (uploadFile !== file) fs.rmSync(uploadFile.path, { force: true }); }
