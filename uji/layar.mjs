@@ -16,12 +16,14 @@ const provider = { id: 'p1', name: 'Google Drive', kind: 'gdrive', enabled: 1, u
 const file = { id: 'f1', name: 'laporan.pdf', mime_type: 'application/pdf', size: 2048, provider: 'p1', cdn_enabled: 0, cdn_slug: null, encrypted: 0, uploaded_at: '2026-09-13T00:00:00Z', deleted_at: '2026-09-13T00:00:00Z' };
 // Satu berkas per jenis media: setiap cabang ikonMime() ikut dijalankan saat render, jadi nama ikon
 // yang hilang atau impor yang tertinggal muncul sebagai kegagalan render, bukan kartu tanpa ikon.
-const media = (id, name, mime_type) => ({ id, name, mime_type, size: 2048, provider: 'p1', cdn_enabled: 0, cdn_slug: null, encrypted: 0, uploaded_at: '2026-09-13T00:00:00Z', deleted_at: null });
-const mediaUji = [media('f2', 'foto.jpg', 'image/jpeg'), media('f3', 'lagu.mp3', 'audio/mpeg'), media('f4', 'klip.mp4', 'video/mp4')];
+// Satu di antaranya punya link CDN (cdn_enabled = 1) supaya baris tab "CDN" dan kelas .is-cdn
+// benar-benar dirender di uji — pemisahan berkas CDN dan berkas biasa tidak lolos begitu saja.
+const media = (id, name, mime_type, tambahan = {}) => ({ id, name, mime_type, size: 2048, provider: 'p1', cdn_enabled: 0, cdn_slug: null, encrypted: 0, uploaded_at: '2026-09-13T00:00:00Z', deleted_at: null, ...tambahan });
+const mediaUji = [media('f2', 'foto.jpg', 'image/jpeg'), media('f3', 'lagu.mp3', 'audio/mpeg'), media('f4', 'klip.mp4', 'video/mp4'), media('f5', 'banner.png', 'image/png', { cdn_enabled: 1, cdn_slug: 'cdn-banner' })];
 const folder = { id: 'd1', name: 'Dokumen', parent_id: null, depth: 0, deleted_at: '2026-09-13T00:00:00Z' };
 const jawaban = {
   '/api/dashboard': { user: { id: 'u1', username: 'vier', role: 'owner' }, folderId: null, folders: [folder], files: [file, ...mediaUji], providers: [provider], stats: { bytes: 2048, files: 1 }, trashCount: 1, uptimeSeconds: 3600 },
-  '/api/admin/overview': { providers: [provider], users: [{ id: 'u1', username: 'vier', email: 'a@b.c', role: 'owner', status: 'active' }], logs: [{ action: 'upload', target_type: 'file', username: 'vier', created_at: '2026-09-13T00:00:00Z' }] },
+  '/api/admin/overview': { providers: [provider], files: { count: 5, bytes: 2048 }, users: [{ id: 'u1', username: 'vier', email: 'a@b.c', role: 'owner', status: 'active', created_at: '2026-09-13T00:00:00Z' }, { id: 'u2', username: 'tamu', email: 't@b.c', role: 'user', status: 'suspended', created_at: '2026-09-13T00:00:00Z' }], logs: [{ action: 'upload', target_type: 'file', username: 'vier', created_at: '2026-09-13T00:00:00Z' }] },
   '/api/trash': { files: [file], folders: [folder], counts: { all: 2, files: 1, folders: 1 } },
 };
 globalThis.fetch = async (url) => ({ ok: true, status: 200, headers: new Map([['content-type', 'application/json']]), json: async () => jawaban[String(url).split('?')[0]] || {} });
@@ -36,11 +38,12 @@ const login = await import('../assets/js/views/login.js');
 state.user = { id: 'u1', username: 'vier', role: 'owner' };
 Object.assign(rute, { dashboard: files.renderDashboard, admin: admin.renderAdmin, trash: trash.renderTrash, login: login.renderLogin });
 
-// Kelas penanda yang wajib ada di markup tiap layar. Dashboard memakai kartu "Drive Storage"
-// (batang akumulasi + rincian provider), Owner control memakai grid kartu provider/member.
+// Kelas penanda yang wajib ada di markup tiap layar. Dashboard memakai daftar baris ala Drive
+// (tab pemisah File/CDN + penyimpanan ringkas di sidebar), Owner control memakai grid kartu
+// provider/member dengan tombol cabut akses.
 const WAJIB = {
-  renderDashboard: ['storage-card', 'storage-bar', 'storage-seg', 'storage-item', '--seg:', 'progress', 'grid', 'provider-mini'],
-  renderAdmin: ['provider-grid', 'member-grid'],
+  renderDashboard: ['storage-card', 'storage-bar', 'storage-seg', 'storage-item', '--seg:', 'progress', 'grid', 'provider-mini', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn'],
+  renderAdmin: ['provider-grid', 'member-grid', 'member-access', 'data-member'],
 };
 let gagal = 0;
 const tangkapan = {};

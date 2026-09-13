@@ -944,6 +944,22 @@ app.get('/api/admin/overview', requireUser, ownerOnly, (_req, res) => {
   return json(res, { users: db.prepare('SELECT id, email, username, role, status, created_at FROM users ORDER BY created_at DESC').all(), files: db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM files WHERE deleted_at IS NULL').get(), providers: providers.map(providerStatusForView), logs: db.prepare('SELECT audit_logs.*, users.username FROM audit_logs JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 8').all() });
 });
 app.post('/api/admin/users', requireUser, ownerOnly, (req, res) => { const { email, username, password } = req.body; if (!email || !username || !password || password.length < 8) return json(res, { error: 'Data invite belum lengkap.' }, 400); const user = { id: id(), email: email.trim().toLowerCase(), username: username.trim(), role: 'user', status: 'active', created_at: now() }; try { db.prepare('INSERT INTO users (id, email, username, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(user.id, user.email, user.username, hash(password), user.role, user.status, user.created_at); audit(req.user.id, 'invite', 'user', user.id); return json(res, user, 201); } catch { return json(res, { error: 'Email atau username sudah digunakan.' }, 409); } });
+// Cabut/pulihkan akses member. `requireUser` sudah menolak baris user yang statusnya bukan 'active'
+// (lihat currentUser), jadi cukup mengubah kolom `status`; sesi yang sedang berjalan dihapus juga
+// supaya cookie lama tidak menyisakan apa pun. File milik member tetap utuh — mencabut akses bukan
+// menghapus akun, dan owner bisa memulihkannya kapan saja. Akun owner tidak bisa dicabut
+// (kalau tidak, workspace bisa terkunci tanpa jalan masuk).
+app.patch('/api/admin/users/:id', requireUser, ownerOnly, (req, res) => {
+  const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return json(res, { error: 'User tidak ditemukan.' }, 404);
+  if (target.role === 'owner') return json(res, { error: 'Akses owner tidak bisa dicabut.' }, 403);
+  const status = req.body.status === 'suspended' ? 'suspended' : req.body.status === 'active' ? 'active' : '';
+  if (!status) return json(res, { error: "Status harus 'active' atau 'suspended'." }, 400);
+  db.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, target.id);
+  if (status === 'suspended') db.prepare('DELETE FROM sessions WHERE user_id = ?').run(target.id);
+  audit(req.user.id, status === 'suspended' ? 'revoke' : 'restore_access', 'user', target.id);
+  return json(res, { id: target.id, status });
+});
 app.post('/api/admin/providers', requireUser, ownerOnly, (req, res) => {
   const kind = String(req.body.kind || '').trim().toLowerCase();
   const name = String(req.body.name || '').trim();

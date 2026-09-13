@@ -56,5 +56,18 @@ cek('renderDashboard tidak memasang ikatan tombol sendiri', badanRender.length >
 const badanCdn = sumberFiles.slice(sumberFiles.indexOf('export function bindCdnUpload'), sumberFiles.indexOf('export function bindProviderPicker'));
 cek('bindCdnUpload hanya menyisipkan tombol kalau ada #dropzone', badanCdn.includes('#dropzone'));
 
+// 5) Cabut akses member. Tombol "Cabut akses" hanya berguna kalau dua bagian ini ada: endpoint
+// owner-only di server, dan ikatan tombol di layar Owner control.
+const sumberServer = baca('server.js');
+cek('server.js punya PATCH /api/admin/users/:id', /app\.patch\('\/api\/admin\/users\/:id'/.test(sumberServer));
+cek('endpoint cabut akses menolak akun owner', /target\.role === 'owner'/.test(sumberServer));
+cek('endpoint cabut akses menghapus sesi aktif', /DELETE FROM sessions WHERE user_id = \?/.test(sumberServer));
+const sumberAdmin = baca('assets/js/views/admin.js');
+cek('admin.js mengikat tombol .member-access', /querySelectorAll\('\.member-access'\)\.forEach/.test(sumberAdmin));
+cek('admin.js memanggil PATCH /api/admin/users/<id>', /api\/admin\/users\/\$\{button\.dataset\.member\}/.test(sumberAdmin));
+
+// 6) Tab File/CDN: ikatan pengalih tab harus ada, kalau tidak tab tidak bisa ditekan sama sekali.
+cek('files.js mengikat pengalih tab File/CDN', /querySelectorAll\('\.tab'\)\.forEach/.test(sumberFiles) && /setAttribute\('data-tab', state\.tab\)/.test(sumberFiles));
+
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

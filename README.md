@@ -310,6 +310,20 @@ Telegram tidak menyediakan angka total quota channel. Dashboard menghitung pengg
 - Tombol **Pindahkan** di setiap kartu file/folder memindahkannya ke folder lain; pilihan `MyDrive (root)` mengeluarkan item dari semua folder. Folder tidak bisa dipindahkan ke dirinya sendiri atau ke turunannya.
 - Tombol **CDN** hanya muncul untuk gambar/video yang tidak dienkripsi dan dipakai untuk menyalakan atau mematikan link `/cdn/<slug>`. File terenkripsi tidak bisa dipakai sebagai CDN karena link CDN mengirim byte apa adanya.
 
+### Tampilan file: tab File dan CDN
+
+- Isi folder tampil sebagai daftar baris (ikon, nama, ukuran · provider · tanggal upload) dengan aksi muncul saat baris disorot — bukan lagi kartu-kartu terpisah.
+- Dua tab di atas daftar memisahkan berkas biasa dan berkas CDN: tab **File** berisi folder dan berkas tanpa link publik, tab **CDN** hanya berkas yang punya link `/cdn/<slug>`. Berkas di tab CDN diberi tanda **CDN** dan warnanya dibedakan.
+- Pemisahan ini memakai kolom `cdn_enabled` yang sudah ada; tidak ada permintaan tambahan ke server. Pindah tab hanya menyembunyikan baris lewat CSS (atribut `data-tab` di panel), dan pilihan tab disimpan di state sehingga tidak hilang saat masuk folder atau muat ulang.
+- Catatan: gambar/video yang di-upload lewat tombol **Upload file** langsung dianggap berkas CDN karena server memang membuatkan link publiknya. Pakai tab CDN untuk melihat mana saja yang link-nya aktif, lalu matikan lewat tombol CDN di baris tersebut kalau tidak mau publik.
+
+### Cabut akses member
+
+- Owner dapat mencabut akses user di **Owner control → Member**: tombol **Cabut akses** mengganti status akun menjadi `suspended`, tombol **Pulihkan akses** mengembalikannya ke `active`.
+- Sesi user yang sedang berjalan langsung dihapus, jadi permintaan API berikutnya dijawab `401` dan halaman login akan diminta lagi. Login baru juga ditolak selama akses dicabut (`status = 'active'` diperiksa di `currentUser` dan `/api/login`).
+- File milik user tetap tersimpan dan tetap miliknya; mencabut akses bukan menghapus akun. Akses owner tidak bisa dicabut (tombolnya tidak muncul, dan server menjawab `403`).
+- Semua tindakan ini tercatat di **Aktivitas terakhir** sebagai `revoke` / `restore_access`.
+
 ## 10. Data dan Backup
 
 Data penting:
@@ -433,6 +447,14 @@ pm2 status
 ```
 
 Hentikan proses lama melalui PM2, atau ubah `PORT` di `ecosystem.config.cjs` dan reverse proxy secara bersamaan.
+
+### Login ditolak karena akses dicabut
+
+Gejala: user memasukkan identitas/password yang benar tetapi selalu dijawab `Identitas atau password salah.` dan halaman langsung kembali ke login.
+
+- Ini bukan bug: owner mencabut aksesnya (status akun `suspended`). Minta owner membuka **Owner control → Member** dan menekan **Pulihkan akses**.
+- Cek cepat di VPS: `sqlite3 data/mydrive.sqlite "SELECT username, status FROM users;"` — akun yang `suspended` tidak bisa login dan sesinya sudah dihapus.
+- Mencabut akses juga memutus sesi yang sedang berjalan; user cukup **Ctrl+Shift+R** sekali kalau halaman lamanya masih menampilkan data sebelum sesi berakhir.
 
 ## 12. Update dan Deploy Ulang
 

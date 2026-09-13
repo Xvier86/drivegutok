@@ -90,40 +90,43 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
   flex-wrap: wrap;
 }
 
-/* Kartu file dan folder */
+/* Baris file dan folder: satu baris per item seperti daftar Google Drive (ikon · nama/meta · aksi). */
 .file-card {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--line-soft);
+  padding: 8px var(--space-3);
+  border: 1px solid transparent;
   border-radius: var(--radius);
-  background: var(--panel-soft);
+  background: transparent;
   cursor: pointer;
-  transition: border-color var(--motion), transform var(--motion);
+  transition: background var(--motion), border-color var(--motion);
 }
-.file-card:hover { border-color: var(--gold-dark); transform: translateY(-1px); }
+.file-card:hover { background: var(--panel-soft); border-color: var(--line-soft); }
 .file-icon {
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-sm);
   background: var(--gold-soft);
   color: var(--gold);
 }
 .file-card.folder .file-icon { background: rgba(231, 185, 63, 0.18); }
+/* Berkas yang punya link CDN diberi warna berbeda supaya langsung terlihat mana yang publik. */
+.file-card.is-cdn .file-icon { background: rgba(231, 185, 63, 0.24); color: var(--gold-bright); }
+.file-info { display: grid; gap: 1px; min-width: 0; }
 .file-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-meta { color: var(--muted); font-size: 12px; }
+.file-meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-actions {
-  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-1);
   opacity: 0;
-  transform: translateY(2px);
-  transition: opacity var(--motion), transform var(--motion);
+  transition: opacity var(--motion);
 }
 
 /* Provider, status, dan angka */
@@ -133,6 +136,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .provider-name { display: flex; align-items: center; gap: var(--space-2); font-weight: 500; }
 .provider-meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .provider-mini { display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); font-size: 12px; }
+.member-access { flex: none; }
 .dot { width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--muted); flex: none; }
 .dot.on { background: var(--gold); }
 .dot.off { background: var(--line); }
@@ -227,8 +231,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 @media (hover: none) { .card-actions { opacity: 1; transform: none; } }
 
 .dropzone {
-  margin-top: var(--space-4);
-  padding: var(--space-5);
+  margin-top: var(--space-3);
+  padding: var(--space-4);
   border: 1px dashed var(--line);
   border-radius: var(--radius);
   color: var(--muted);

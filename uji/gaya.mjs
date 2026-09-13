@@ -107,5 +107,12 @@ if (skripLuar.length) console.error(`        skrip luar: ${skripLuar.join(', ')}
 // Cloudflare tidak disimpan browser sama sekali, jadi aset JS/CSS/HTML harus dikirim dengan itu.
 cek("server.js mengirim 'no-store' untuk aset JS/CSS/HTML", /Cache-Control',\s*\/\\\.\(js\|css\|html\)\$\/\.test\(berkas\)\s*\?\s*'no-store'/.test(baca('server.js')));
 
+// Pemisahan berkas CDN dan berkas biasa: kalau aturan ini hilang, tab File/CDN cuma hiasan —
+// dua tab menampilkan daftar yang sama.
+const cssTampilan = baca('assets/styles/views.css');
+cek('CSS menyembunyikan baris per tab (File vs CDN)', /\.files-panel\[data-tab="file"\] \.file-card\.is-cdn/.test(cssTampilan) && /\.files-panel\[data-tab="cdn"\] \.file-card:not\(\.is-cdn\)/.test(cssTampilan));
+cek('kelas .tabs dan .tab punya aturan sendiri', /(^|\n)\.tabs \{/.test(cssTampilan) && /(^|\n)\.tab \{/.test(cssTampilan));
+cek('kelas .file-list dan .file-info punya aturan sendiri', /(^|\n)\.file-list \{/.test(cssTampilan) && /(^|\n)\.file-info \{/.test(baca('assets/styles/components.css')));
+
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

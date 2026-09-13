@@ -1,8 +1,10 @@
 // Keadaan aplikasi dan helper yang bergantung pada state.
 import { app, formatBytes } from './core.js';
 
-export let state = { user: null, folderId: null, dashboard: null };
-export function applyRoleVisibility() { const shell = app.querySelector('.app-shell'); if (!shell) return; const owner = state.user?.role === 'owner'; shell.classList.toggle('member-view', !owner); if (owner) return; app.querySelectorAll('.file-card:not(.folder)').forEach((card, index) => { const file = state.dashboard?.files?.[index]; const meta = card.querySelector('.file-meta'); if (file && meta) meta.textContent = formatBytes(file.size); }); }
+// `tab` = tab daftar yang sedang dipilih di layar file: 'file' (berkas biasa) atau 'cdn' (berkas yang
+// punya link CDN). Disimpan di state supaya pilihan tidak hilang saat pindah folder/muat ulang.
+export let state = { user: null, folderId: null, dashboard: null, tab: 'file' };
+export function applyRoleVisibility() { const shell = app.querySelector('.app-shell'); if (!shell) return; const owner = state.user?.role === 'owner'; shell.classList.toggle('member-view', !owner); if (owner) return; app.querySelectorAll('.file-card:not(.folder)').forEach((card) => { const file = (state.dashboard?.files || []).find((item) => item.id === card.dataset.fileId); const meta = card.querySelector('.file-meta'); if (file && meta) meta.textContent = formatBytes(file.size); }); }
 export const isCdnMime = (mimeType) => /^(image|video)\//.test(String(mimeType || ''));
 // Ikon kartu mengikuti jenis berkas. Tanpa peta ini foto/video/PDF/audio memakai ikon 'file' yang
 // sama, dan nama yang tidak ada di ikon.js hanya menghasilkan SVG kosong tanpa error di browser.
