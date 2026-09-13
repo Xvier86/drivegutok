@@ -11,7 +11,7 @@ drivegutok/
 ├─ server.js               seluruh backend: API, provider, otentikasi, enkripsi config
 ├─ cleanup.js              pembersih Sampah otomatis (dipanggil PM2/cron)
 ├─ ecosystem.config.cjs    konfigurasi PM2
-├─ *.sh                    setup.sh, deploy.sh, redeploy.sh, update-code.sh, deploy-bersih.sh, perbaiki-vps.sh
+├─ *.sh                    setup.sh, deploy.sh, redeploy.sh, update-code.sh, deploy-bersih.sh, perbaiki-vps.sh, vps-nginx.sh
 ├─ assets/                 satu-satunya folder yang dikirim ke browser (express.static)
 │  ├─ index.html           kerangka halaman: hanya #app dan #toast
 │  ├─ logo.jpg
@@ -30,7 +30,7 @@ Script `*.sh` sengaja tetap di akar repo karena alur VPS memanggilnya dengan nam
 
 ```bash
 npm run check                  # sintaks semua berkas + uji cepat
-npm run uji                    # lingkup modul, batas waktu upload, render tiap layar, gaya CSS
+npm run uji                    # lingkup modul, batas waktu upload, render tiap layar, gaya CSS, ikatan handler
 npm run uji:berat              # cleanup.js, server lambat, dan pemakaian RAM saat upload besar
 bash uji/skrip-deploy.sh .     # latihan deploy di VPS palsu (pm2/npm/curl diganti stub)
 ```
@@ -222,6 +222,15 @@ server {
 
 Aktifkan HTTPS menggunakan Certbot atau SSL aaPanel. Saat `NODE_ENV=production`, cookie session otomatis memakai flag `Secure`.
 
+**Batas bawaan Nginx adalah 1 MB.** Kalau `client_max_body_size` tidak ada di server block yang melayani domain, setiap upload di atas 1 MB dijawab `413 Request Entity Too Large` oleh Nginx **sebelum Express melihat request-nya** — aplikasi ini sendiri tidak punya batas 1 MB (`MAX_FILE_SIZE` default 5 GB dan multer menulis file ke `data/tmp`). Jadi keluhan "upload lebih dari 1 MB gagal" selalu masalah lapisan proxy, bukan `server.js`:
+
+```bash
+sudo bash vps-nginx.sh                                   # isi 5G + gzip + buffering off, reload, lalu uji
+NGINX_CONF=/etc/nginx/sites-enabled/gutokdrive.world DRY=1 bash vps-nginx.sh   # pratinjau perubahan tanpa menyentuh nginx
+```
+
+`vps-nginx.sh` mengganti/menyisipkan `client_max_body_size` (default `5G`), menyalakan gzip aset, mematikan `proxy_request_buffering`/`proxy_buffering`, mencadangkan konfigurasi lama, mengembalikannya otomatis kalau `nginx -t` gagal, lalu **membuktikan** hasilnya dengan body 2 MB dan 6 MB di tiga lapis: Express langsung, Nginx lokal, dan URL publik. Uji itu tanpa cookie (Express menjawab 401), jadi tidak ada file yang benar-benar tersimpan.
+
 Kalau trafik lewat Cloudflare (proxy oranye), batas tubuh request di paket gratis adalah 100 MB — Cloudflare akan menjawab 413 sebelum Nginx melihatnya. Untuk file lebih besar, arahkan subdomain upload langsung ke IP VPS (DNS only) dan pastikan `client_max_body_size` di Nginx sesuai.
 
 ## 7. Batas Memori VPS 1 GB
@@ -345,6 +354,27 @@ Pastikan browser memakai domain/port yang sama dengan instance PM2. Jangan menja
 - Chat ID channel biasanya berbentuk `-100...`.
 - Pastikan bot memiliki izin mengirim file.
 - Periksa token dan konfigurasi provider.
+
+### Upload di atas ~1 MB gagal (`413 Request Entity Too Large`)
+
+Bukan bug aplikasi: Nginx memakai default `client_max_body_size 1m`, jadi body di atas 1 MB ditolak proxy sebelum Express melihatnya. Pastikan direktifnya ada di server block domain:
+
+```bash
+grep -rn client_max_body_size /etc/nginx/sites-enabled /etc/nginx/conf.d
+sudo bash vps-nginx.sh      # mengisi 5G + reload + uji body 2 MB dan 6 MB
+```
+
+Kalau "Nginx lokal" lulus 401 tapi URL publik masih 413, batasnya ada di Cloudflare (paket gratis 100 MB) — pakai subdomain DNS-only untuk upload besar. Kalau keduanya lulus tapi upload tetap gagal, periksa sisa disk VPS: multer menulis file ke `data/tmp` dulu (`df -h /var/www`).
+
+### Tombol dashboard tidak bereaksi (Owner control, Upload file, Sampah, logout)
+
+Gejala: halaman dashboard tampil normal, tapi semua tombol di dalamnya diam — tidak ada pesan error apa pun. Ini pernah terjadi karena `bindDashboard()` tetap ada di daftar impor `assets/app.js` tetapi tidak pernah dipanggil setelah refactor modul (commit `a2374c7`). Setelah itu `bindDashboard()` diberi penjaga (`if (!document.querySelector('#upload-trigger')) return;`) supaya aman dipanggil di layar lain. Untuk memastikan rilis di VPS memuat perbaikannya:
+
+```bash
+cd /var/www/gutok-drive && grep -c 'bindDashboard()' assets/app.js   # harus 1
+```
+
+`uji/ikatan.mjs` (bagian dari `npm run uji`) sekarang menolak dua bentuk kesalahan itu: impor `bind*`/`render*` yang tidak pernah dipakai dan `querySelector('#id')` yang tidak punya elemen `id="id"` di markup mana pun.
 
 ### Port 3000 sudah dipakai
 
@@ -514,6 +544,12 @@ pm2 logs gutok-drive --lines 50 --nostream
 ```
 
 Lanjutkan dari browser: login, upload file kecil, buka menu **Sampah**, dan uji satu tombol **Pindahkan**/**CDN**.
+
+Uji batas upload dan konfigurasi Nginx sekaligus (aman dijalankan berulang):
+
+```bash
+sudo bash vps-nginx.sh
+```
 
 Kalau `pm2 restart ecosystem.config.cjs --update-env` terasa tidak memuat env baru, paksa dengan `pm2 delete gutok-drive && pm2 start ecosystem.config.cjs && pm2 save`.
 

@@ -102,7 +102,7 @@ const TELEGRAM_API = (process.env.TELEGRAM_API_BASE || 'https://api.telegram.org
 const TELEGRAM_FILE_API = `${TELEGRAM_API}/file`;
 // Google Drive API juga bisa diarahkan ke server tiruan saat uji (uji/ram.mjs) supaya jalur upload
 // bisa diukur tanpa mengirim file besar ke internet.
-const GOOGLE_API = (process.env.GOOGLE_API_BASE || 'https://www.googleapis.com').replace(/\/+\$/, '');
+const GOOGLE_API = (process.env.GOOGLE_API_BASE || 'https://www.googleapis.com').replace(/\/+$/, '');
 
 const configKey = crypto.createHash('sha256').update(process.env.STORAGE_CONFIG_KEY || 'change-this-storage-config-key').digest();
 function encryptConfig(config) {

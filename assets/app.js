@@ -5,7 +5,7 @@ import { applyRoleVisibility, state } from './js/state.js';
 import { renderLogin } from './js/views/login.js';
 import { bindCdnUpload, bindDashboard, bindFileFolderActions, bindMediaPreview, bindProviderPicker, bindUploadOptions, renderDashboard } from './js/views/files.js';
 import { renderAdmin } from './js/views/admin.js';
-import { bindTrashView, renderTrash } from './js/views/trash.js';
+import { renderTrash } from './js/views/trash.js';
 
 rute.dashboard = renderDashboard;
 rute.admin = renderAdmin;
@@ -18,7 +18,7 @@ document.addEventListener('submit', (event) => { if (event.target.id === 'setup-
 document.addEventListener('click', (event) => { if (event.target.closest('#logout')) { showLoading('Keluar dari Gutok Drive...'); setTimeout(hideLoading, 1400); } });
 
 // Dipanggil sekali per render (bukan tiap perubahan DOM).
-const pasangUlang = () => { bindMediaPreview(); bindFileFolderActions(); bindCdnUpload(); bindProviderPicker(); bindUploadOptions(); applyRoleVisibility(); animateView(); };
+const pasangUlang = () => { bindDashboard(); bindMediaPreview(); bindFileFolderActions(); bindCdnUpload(); bindProviderPicker(); bindUploadOptions(); applyRoleVisibility(); animateView(); };
 document.addEventListener('layar-siap', pasangUlang);
 
 start();
