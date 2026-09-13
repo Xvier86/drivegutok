@@ -20,6 +20,16 @@
   --gold-soft: rgba(231, 185, 63, 0.12);
   --danger: #e2684f;
 
+  /* Meter penyimpanan: satu nada menyala, satu nada mati, dan hairline --line untuk garis
+     pemisahnya. Widget ini sengaja tidak memakai box-shadow — pemisahan bagian hanya lewat
+     hairline dan warna segmen. */
+  --amber-glow: #ffd968;
+  --amber-unlit: #33291a;
+  /* Knob untuk animasi masuk meter: --i dipasang inline per segmen oleh files.js, --delay-pct
+     dipasang dari JS setelah segmen terakhir menyala. Nilai 0 di sini hanya jaring pengaman. */
+  --i: 0;
+  --delay-pct: 0ms;
+
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 18px;
@@ -35,6 +45,7 @@
 
   --font-ui: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-display: 'Space Grotesk', 'DM Sans', system-ui, sans-serif;
+  --f-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
   --shadow-soft: 0 8px 22px rgba(0, 0, 0, 0.28);

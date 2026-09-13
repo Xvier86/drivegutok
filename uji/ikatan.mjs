@@ -69,5 +69,12 @@ cek('admin.js memanggil PATCH /api/admin/users/<id>', /api\/admin\/users\/\$\{bu
 // 6) Tab File/CDN: ikatan pengalih tab harus ada, kalau tidak tab tidak bisa ditekan sama sekali.
 cek('files.js mengikat pengalih tab File/CDN', /querySelectorAll\('\.tab'\)\.forEach/.test(sumberFiles) && /setAttribute\('data-tab', state\.tab\)/.test(sumberFiles));
 
+// 7) Widget penyimpanan: rincian per provider sudah dihapus dari dashboard, dan animasi masuknya
+// dijaga flag modul — satu kali per page-load. Tanpa flag itu, setiap render ulang (pindah folder)
+// memutar lagi hitungan naik dan nyala segmen: gerakan berulang tanpa alasan.
+cek('markup dashboard tidak lagi merender baris per provider', !/storage-item|storage-seg|class="progress|provider-mini/.test(badanRender));
+cek('bindDashboard memanggil animateStorage()', /animateStorage\(\);/.test(sumberFiles));
+cek('animasi meter dikunci sekali per page-load', /let storageDimainkan = false/.test(sumberFiles) && /storageDimainkan = true/.test(sumberFiles));
+
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

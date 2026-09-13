@@ -141,14 +141,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .dot.on { background: var(--gold); }
 .dot.off { background: var(--line); }
 .stats { display: grid; gap: var(--space-3); }
-.stat-number { font-family: var(--font-display); font-size: 34px; color: var(--gold-bright); }
 .server-status { color: var(--muted); font-size: 12px; }
 .avatar { display: grid; place-items: center; width: 38px; height: 38px; border-radius: var(--radius-pill); background: var(--gold-soft); color: var(--gold-bright); font-weight: 600; }
 .user-menu { display: flex; align-items: center; gap: var(--space-3); }
 .user-menu small { display: block; color: var(--muted); }
-
-.progress { position: relative; height: 6px; border-radius: var(--radius-pill); background: var(--line-soft); overflow: hidden; }
-.progress span { display: block; height: 100%; background: var(--gold); transform-origin: left; animation: tumbuh 0.9s var(--motion) backwards; }
 
 .breadcrumb { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; color: var(--muted); font-size: 12px; }
 .breadcrumb .crumb { background: none; border: 0; padding: 0; color: var(--muted-strong); font: inherit; cursor: pointer; }
@@ -197,22 +193,28 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 
 .admin-card { display: grid; gap: var(--space-2); }
 
-/* Accumulasi Drive Storage: satu batang bertumpuk untuk semua provider, lalu rincian
-   per provider dengan bilah sendiri. Semua bilah tumbuh dari kiri sekali per render. */
-.storage-card .panel-heading { margin-bottom: var(--space-2); }
-.storage-card h3 { display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); }
-.storage-bar { display: flex; gap: 2px; height: 12px; border-radius: var(--radius-pill); background: var(--line-soft); overflow: hidden; }
-.storage-seg { --seg: 0%; flex: none; width: var(--seg); background: var(--gold); transform-origin: left; animation: tumbuh 0.9s var(--motion) backwards; }
-.storage-seg:nth-child(2) { background: var(--gold-bright); animation-delay: 0.06s; }
-.storage-seg:nth-child(3) { background: var(--gold-dark); animation-delay: 0.12s; }
-.storage-seg:nth-child(4) { background: var(--muted-strong); animation-delay: 0.18s; }
-.storage-seg:nth-child(5) { background: var(--muted); animation-delay: 0.24s; }
-.storage-list { display: grid; gap: var(--space-2); }
-.storage-item { display: grid; gap: var(--space-1); padding: var(--space-2) 0; border-bottom: 1px solid var(--line-soft); }
-.storage-item:last-child { border-bottom: 0; }
-.storage-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; }
-.storage-pct { color: var(--gold-bright); font-size: 12px; flex: none; }
-.storage-empty { padding: var(--space-4); border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted); font-size: 12px; text-align: center; }
+/* Widget penyimpanan: satu meter tersegmentasi untuk akumulasi semua provider. Tidak ada baris,
+   nama, atau status per provider di sini — rincian itu hanya ada di Owner control. Tanpa
+   box-shadow: pemisahan bagian hanya lewat hairline --line dan warna segmen. */
+.storage-card { display: grid; gap: var(--space-3); border-color: var(--line); }
+.storage-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.storage-label { font-family: var(--font-display); font-size: 13px; color: var(--muted-strong); }
+.storage-pct { font-family: var(--f-mono); font-size: 12px; color: var(--amber-glow); }
+.storage-readout { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.storage-isi { font-family: var(--f-mono); font-size: 21px; color: var(--paper); }
+.storage-dari { font-size: 11px; color: var(--muted); }
+.storage-total { font-family: var(--f-mono); color: var(--muted-strong); }
+.storage-meter { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--ink-soft); }
+.segmen { flex: 1; height: 12px; border-radius: 2px; background: var(--amber-unlit); }
+.segmen.on { background: var(--amber-glow); }
+/* Animasi masuk hanya dipasang kalau JS menambahkan .is-anim: tanpa itu (reduced-motion, atau
+   render ulang) segmen dan persentase sudah dalam keadaan final, jadi tidak ada kedipan. */
+.storage-meter.is-anim .segmen.on { animation: nyala-segmen 240ms var(--motion) both; animation-delay: calc(var(--i) * 26ms); }
+.storage-card.is-anim .storage-pct { animation: muncul-persen 340ms var(--motion) both; animation-delay: var(--delay-pct); }
+
+@keyframes nyala-segmen { from { background: var(--amber-unlit); } }
+
+@keyframes muncul-persen { from { opacity: 0; } }
 
 /* Grid kartu di Owner control: provider dan member sejajar dalam kolom otomatis. */
 .provider-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: var(--space-3); }
@@ -221,8 +223,6 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .provider-grid .provider { flex-direction: column; align-items: stretch; gap: var(--space-3); }
 .provider-grid .provider .action-row { justify-content: flex-start; }
 .provider-grid .provider-meta { max-width: none; }
-
-@keyframes tumbuh { from { transform: scaleX(0); } }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 

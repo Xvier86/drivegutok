@@ -65,8 +65,25 @@ for (const berkas of berkasCss) {
 cek('struktur CSS: kurung seimbang dan tanpa selector bersarang', rusak.length === 0);
 rusak.forEach((baris) => console.error(`        ${baris}`));
 
-// Bilah storage wajib tumbuh (bukan muncul mendadak). Dipakai .storage-seg dan .progress span.
-cek('keyframes tumbuh untuk bilah storage ada', berkasCss.some((berkas) => /@keyframes\s+tumbuh\s*\{/.test(baca(berkas))));
+// Widget penyimpanan: meter tersegmentasi yang menyala berurutan (delay per --i) lalu persentase
+// menyusul setelah segmen terakhir. Semuanya animasi CSS, bukan timer JS, dan wajib tanpa
+// box-shadow — pemisahan bagian hanya lewat hairline --line dan warna segmen.
+const cssKomponen = baca('assets/styles/components.css');
+// Komentar dibuang dulu: kalimat penjelas "tanpa box-shadow" di blok ini tidak boleh ikut terbaca
+// sebagai deklarasi box-shadow.
+const blokStorage = cssKomponen.slice(cssKomponen.indexOf('/* Widget penyimpanan'), cssKomponen.indexOf('/* Grid kartu di Owner control')).replace(/\/\*[\s\S]*?\*\//g, '');
+cek('blok CSS widget penyimpanan ditemukan', blokStorage.length > 0);
+cek('keyframes nyala-segmen dan muncul-persen ada', /@keyframes\s+nyala-segmen\s*\{/.test(blokStorage) && /@keyframes\s+muncul-persen\s*\{/.test(blokStorage));
+cek('segmen menyala berurutan lewat animation-delay calc(var(--i))', /animation-delay:\s*calc\(var\(--i\)/.test(blokStorage));
+cek('persentase muncul setelah meter selesai (var(--delay-pct))', /\.storage-card\.is-anim \.storage-pct/.test(blokStorage) && /var\(--delay-pct\)/.test(blokStorage));
+cek('widget penyimpanan tanpa box-shadow', !/box-shadow/.test(blokStorage));
+cek('meter memakai token --amber-glow, --amber-unlit, dan hairline --line', /var\(--amber-glow\)/.test(blokStorage) && /var\(--amber-unlit\)/.test(blokStorage) && /var\(--line\)/.test(blokStorage));
+cek('angka penyimpanan memakai var(--f-mono)', /font-family:\s*var\(--f-mono\)/.test(blokStorage));
+// Animasi hanya sekali per page-load: dijaga flag modul, dan prefers-reduced-motion melewatinya
+// sama sekali (segmen langsung menyala penuh, angka tidak dihitung naik).
+const sumberFiles = baca('assets/js/views/files.js');
+cek('animasi meter dikunci flag sekali per page-load', /let storageDimainkan = false/.test(sumberFiles) && /storageDimainkan = true/.test(sumberFiles));
+cek('animasi meter menghormati prefers-reduced-motion', /prefers-reduced-motion: reduce/.test(sumberFiles));
 
 const token = new Set([...berkasCss.map((berkas) => baca(berkas)).join('\n').matchAll(/--([a-z0-9-]+)\s*:/g)].map((m) => m[1]));
 const dipakaiToken = new Set();
@@ -97,6 +114,9 @@ const halaman = baca('assets/index.html');
 const skripLuar = [...halaman.matchAll(/<script[^>]+src="(https?:[^"]+)"/g)].map((m) => m[1]);
 cek('index.html tidak memuat skrip pihak ketiga', skripLuar.length === 0);
 if (skripLuar.length) console.error(`        skrip luar: ${skripLuar.join(', ')}`);
+// Font: Space Grotesk untuk label display, JetBrains Mono khusus angka. Kalau mono tidak dimuat,
+// angka meter jatuh ke font sistem dan lebarnya bergoyang saat count-up.
+cek('index.html memuat Space Grotesk dan JetBrains Mono', /family=[^"]*Space\+Grotesk/.test(halaman) && /family=[^"]*JetBrains\+Mono/.test(halaman));
 
 // Pengiriman aset ke browser. Terukur di produksi 13 Sep 2026 (curl ke /js/views/admin.js dengan
 // query pengusir cache, jawaban cf-cache-status=MISS dari origin): origin mengirim `no-cache`, tetapi

@@ -42,8 +42,7 @@
 
 /* Penyimpanan di sidebar: versi ringkas, karena sidebar hanya selebar 264px. */
 .sidebar .storage-card { padding: var(--space-4); }
-.sidebar .storage-card .stat-number { font-size: 22px; }
-.sidebar .storage-card .provider-meta, .sidebar .storage-card .subtle { font-size: 11px; }
+.sidebar .storage-card .storage-isi { font-size: 19px; }
 
 /* Sampah: satu kolom baris, sama seperti daftar file. */
 .trash-list { gap: var(--space-1); }
@@ -54,8 +53,9 @@
 .panel .provider .action-row { flex-wrap: wrap; }
 .panel.stats .provider .provider-meta { max-width: 44ch; }
 
-/* Member tidak melihat daftar provider; dulu ini ditulis sebagai style inline dari JS. */
-.member-view .provider-mini, .member-view .provider-label { display: none; }
+/* Member tidak melihat rincian provider: baris per provider sudah tidak dirender lagi di sidebar
+   (lihat widget penyimpanan di files.js), jadi satu-satunya penjagaan yang tersisa adalah
+   applyRoleVisibility() yang menyembunyikan nama provider di meta tiap berkas. */
 .admin-card p { color: var(--muted); font-size: 13px; }
 
 @media (max-width: 640px) {

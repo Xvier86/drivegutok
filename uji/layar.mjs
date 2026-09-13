@@ -39,12 +39,16 @@ state.user = { id: 'u1', username: 'vier', role: 'owner' };
 Object.assign(rute, { dashboard: files.renderDashboard, admin: admin.renderAdmin, trash: trash.renderTrash, login: login.renderLogin });
 
 // Kelas penanda yang wajib ada di markup tiap layar. Dashboard memakai daftar baris ala Drive
-// (tab pemisah File/CDN + penyimpanan ringkas di sidebar), Owner control memakai grid kartu
-// provider/member dengan tombol cabut akses.
+// (tab pemisah File/CDN + widget penyimpanan ringkas di sidebar), Owner control memakai grid kartu
+// provider/member dengan tombol cabut akses. Widget penyimpanan sengaja TIDAK merinci per provider:
+// daftar di bawah memeriksa meter tersegmentasi, bukan baris provider.
 const WAJIB = {
-  renderDashboard: ['storage-card', 'storage-bar', 'storage-seg', 'storage-item', '--seg:', 'progress', 'grid', 'provider-mini', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn'],
+  renderDashboard: ['storage-card', 'storage-head', 'storage-label', 'Penyimpanan', 'storage-isi', 'data-bytes', 'storage-dari', 'storage-total', 'storage-pct', 'storage-meter', 'segmen', '--i:', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn'],
   renderAdmin: ['provider-grid', 'member-grid', 'member-access', 'data-member'],
 };
+// Jejak markup lama yang harus hilang: nama/status provider per baris dan bilah individualnya.
+const JEJAK_PROVIDER = ['storage-item', 'storage-row', 'storage-list', 'storage-bar', 'storage-seg', 'class="progress', 'provider-mini', 'provider-label'];
+
 let gagal = 0;
 const tangkapan = {};
 // Bug lama: renderAdmin memasang `onclick = ke('dashboard')` tanpa dibungkus fungsi, jadi navigasi
@@ -64,5 +68,15 @@ for (const [nama, penanda] of Object.entries(WAJIB)) {
   if (hilang.length) { console.error(`  GAGAL  ${nama} kehilangan penanda: ${hilang.join(', ')}`); gagal += 1; }
   else console.log(`  ok  markup ${nama} lengkap`);
 }
+// Widget penyimpanan hanya boleh menampilkan meter: tidak ada jejak nama, status, atau bilah per
+// provider. Kalau salah satu kelas lama kembali muncul, rincian per provider diam-diam hidup lagi.
+const sisaProvider = JEJAK_PROVIDER.filter((jejak) => tangkapan.renderDashboard.includes(jejak));
+if (sisaProvider.length) { console.error(`  GAGAL  dashboard masih merender rincian per provider: ${sisaProvider.join(', ')}`); gagal += 1; }
+else console.log('  ok  dashboard tanpa rincian per provider');
+// Jumlah segmen meter ikut diperiksa supaya meter tidak menyusut tanpa disadari (mis. 5 segmen
+// seperti versi lama yang satu segmen per provider).
+const jumlahSegmen = (tangkapan.renderDashboard.match(/class="segmen/g) || []).length;
+if (jumlahSegmen === 28) console.log('  ok  meter penyimpanan 28 segmen');
+else { console.error(`  GAGAL  meter penyimpanan ${jumlahSegmen} segmen (harus 28)`); gagal += 1; }
 console.log(gagal ? `GAGAL: ${gagal} layar.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;
