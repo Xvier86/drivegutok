@@ -43,7 +43,7 @@ Object.assign(rute, { dashboard: files.renderDashboard, admin: admin.renderAdmin
 // provider/member dengan tombol cabut akses. Widget penyimpanan sengaja TIDAK merinci per provider:
 // daftar di bawah memeriksa meter tersegmentasi, bukan baris provider.
 const WAJIB = {
-  renderDashboard: ['storage-card', 'storage-head', 'storage-label', 'Penyimpanan', 'storage-isi', 'data-bytes', 'storage-dari', 'storage-total', 'storage-pct', 'storage-meter', 'segmen', '--i:', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn'],
+  renderDashboard: ['storage-card', 'storage-head', 'storage-label', 'Penyimpanan', 'storage-isi', 'data-bytes', 'storage-dari', 'storage-total', 'storage-pct', 'storage-meter', 'segmen', '--i:', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn', 'class="fab"', 'upload-trigger'],
   renderAdmin: ['provider-grid', 'member-grid', 'member-access', 'data-member'],
 };
 // Jejak markup lama yang harus hilang: nama/status provider per baris dan bilah individualnya.
@@ -78,5 +78,10 @@ else console.log('  ok  dashboard tanpa rincian per provider');
 const jumlahSegmen = (tangkapan.renderDashboard.match(/class="segmen/g) || []).length;
 if (jumlahSegmen === 28) console.log('  ok  meter penyimpanan 28 segmen');
 else { console.error(`  GAGAL  meter penyimpanan ${jumlahSegmen} segmen (harus 28)`); gagal += 1; }
+// Tombol Unggah pindah dari toolbar ke tombol mengapung: satu aksi utama yang selalu terjangkau,
+// dan toolbar cukup menyisakan Folder baru + Upload CDN (yang disisipkan bindCdnUpload saat runtime).
+const dasbor = tangkapan.renderDashboard;
+if (/<button class="fab" id="upload-trigger"/.test(dasbor) && !/class="primary" id="upload-trigger"/.test(dasbor)) console.log('  ok  tombol Unggah jadi FAB, bukan tombol toolbar');
+else { console.error('  GAGAL  tombol Unggah belum dipindah ke FAB'); gagal += 1; }
 console.log(gagal ? `GAGAL: ${gagal} layar.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

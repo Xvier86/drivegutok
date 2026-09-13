@@ -85,6 +85,16 @@ const sumberFiles = baca('assets/js/views/files.js');
 cek('animasi meter dikunci flag sekali per page-load', /let storageDimainkan = false/.test(sumberFiles) && /storageDimainkan = true/.test(sumberFiles));
 cek('animasi meter menghormati prefers-reduced-motion', /prefers-reduced-motion: reduce/.test(sumberFiles));
 
+// Baris unggah dan aksi hapus. Tombol hapus disembunyikan dengan `visibility` (bukan `display`)
+// selama unggah supaya tata letak baris tidak melompat, dan animasi masuk/keluar baris punya
+// keyframes sendiri — tanpa keyframes-nya, `animationend` di deleteFile() hanya menunggu timeout.
+cek('kelas baris unggah punya aturan sendiri', ['upl-meta', 'upl-bar', 'upl-fill', 'upl-angka', 'upl-persen', 'badge-selesai'].every((kelas) => new RegExp(`\\.${kelas}[ ,{]`).test(cssKomponen)));
+cek('tombol hapus disembunyikan selama unggah', /\.file-card\.is-uploading \.file-delete \{\s*visibility: hidden/.test(cssKomponen));
+cek('keyframes rowIn dan rowKeluar ada', /@keyframes\s+rowIn\s*\{/.test(cssKomponen) && /@keyframes\s+rowKeluar\s*\{/.test(cssKomponen));
+cek('baris .removing memakai animasi keluar', /\.file-card\.removing \{[^}]*animation: rowKeluar/.test(cssKomponen));
+cek('tombol unggah mengapung punya aturan .fab', /(^|\n)\.fab \{/.test(cssKomponen));
+cek('bilah unggah tetap terlihat di tab CDN', /\.files-panel\[data-tab="cdn"\] \.file-card\.is-uploading \{ display: grid; \}/.test(baca('assets/styles/views.css')));
+
 const token = new Set([...berkasCss.map((berkas) => baca(berkas)).join('\n').matchAll(/--([a-z0-9-]+)\s*:/g)].map((m) => m[1]));
 const dipakaiToken = new Set();
 for (const berkas of [...berkasJs, ...berkasCss]) {

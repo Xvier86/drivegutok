@@ -129,6 +129,28 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
   transition: opacity var(--motion);
 }
 
+/* Baris sementara selama unggah: bilah, kecepatan sesaat, dan persen. Baris masuk dengan rowIn.
+   Tombol hapus disembunyikan (bukan dimatikan) karena membatalkan unggahan butuh abort controller —
+   lihat deleteFile() di files.js. */
+.file-card.is-uploading { animation: rowIn 280ms var(--motion) both; }
+.file-card.is-uploading .file-delete { visibility: hidden; }
+.upl-meta { display: flex; align-items: center; gap: var(--space-2); font-size: 12px; color: var(--muted); }
+.upl-bar { flex: 1; min-width: 60px; height: 4px; border-radius: var(--radius-pill); background: var(--amber-unlit); overflow: hidden; }
+.upl-fill { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--gold); transition: width 120ms linear; }
+.upl-angka, .upl-persen { font-family: var(--f-mono); }
+.upl-persen { color: var(--muted-strong); }
+.badge-selesai { display: none; align-items: center; gap: var(--space-1); color: var(--gold-bright); font-size: 12px; }
+.file-card.is-selesai .badge-selesai { display: inline-flex; animation: rowIn 200ms var(--motion) both; }
+.file-card.is-selesai .upl-meta { display: none; }
+
+/* Baris dihapus: meluncur keluar dan tingginya mengempis sebelum DELETE dikirim (lihat deleteFile()).
+   max-height awal hanya angka aman — baris file tingginya di bawah 120px. */
+.file-card.removing { max-height: 120px; overflow: hidden; pointer-events: none; animation: rowKeluar 300ms var(--motion) forwards; }
+
+@keyframes rowIn { from { opacity: 0; transform: translateY(6px); } }
+
+@keyframes rowKeluar { to { opacity: 0; transform: scale(0.96) translateX(28px); max-height: 0; padding-top: 0; padding-bottom: 0; } }
+
 /* Provider, status, dan angka */
 .provider { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
 .provider:last-child { border-bottom: 0; }
@@ -240,3 +262,27 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
   font-size: 13px;
 }
 .dropzone.drag { border-color: var(--gold); color: var(--gold-bright); background: var(--gold-soft); }
+
+/* Tombol Unggah mengapung di kanan bawah: aksi utama yang selalu terjangkau, jadi toolbar cukup
+   menyisakan Folder baru dan Upload CDN. Radius penuh + bayangan amber supaya terlihat sebagai
+   tombol aksi, bukan sekadar ikon. */
+.fab {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 1px solid var(--gold-bright);
+  border-radius: var(--radius-pill);
+  background: var(--gold);
+  color: var(--ink);
+  box-shadow: 0 12px 26px rgba(231, 185, 63, 0.32);
+  cursor: pointer;
+  transition: background var(--motion), transform var(--motion);
+}
+.fab:hover { background: var(--gold-bright); transform: translateY(-2px); }
+.fab:active { transform: translateY(1px); }

@@ -76,5 +76,26 @@ cek('markup dashboard tidak lagi merender baris per provider', !/storage-item|st
 cek('bindDashboard memanggil animateStorage()', /animateStorage\(\);/.test(sumberFiles));
 cek('animasi meter dikunci sekali per page-load', /let storageDimainkan = false/.test(sumberFiles) && /storageDimainkan = true/.test(sumberFiles));
 
+// 8) Bilah unggah per baris. Hanya XMLHttpRequest yang memberi xhr.upload.onprogress — satu-satunya
+// sumber byte terkirim — jadi tanpa XHR bilah dan kecepatan mustahil ditampilkan. Kecepatannya wajib
+// delta byte/delta waktu antar-event (`event.loaded - byteLalu`), bukan rata-rata sejak awal: angka
+// rata-rata terus naik walau jaringan melambat, jadi macetnya tidak kelihatan.
+const badanUnggah = sumberFiles.slice(sumberFiles.indexOf('function unggahXhr'), sumberFiles.indexOf('export async function uploadCdnFiles'));
+cek('unggah file memakai XMLHttpRequest', /new XMLHttpRequest\(\)/.test(badanUnggah));
+cek('bilah unggah mengikuti xhr.upload.onprogress', /xhr\.upload\.onprogress = /.test(badanUnggah));
+cek('kecepatan dari delta byte antar-event, bukan rata-rata', /event\.loaded - byteLalu/.test(badanUnggah) && !/event\.loaded \/ \(kini - mulai\)/.test(badanUnggah));
+cek('baris unggah memakai kelas is-uploading', /file-card is-uploading/.test(badanUnggah));
+cek('selesai -> badge sebentar -> render ulang', /classList\.replace\('is-uploading', 'is-selesai'\)/.test(badanUnggah) && /1800/.test(badanUnggah));
+cek('unggahan tidak lagi memakai lapisan pemuatan', !/showLoading\('Upload file/.test(badanUnggah));
+cek('unggahan gagal membuang barisnya', /baris\?\.remove\(\)/.test(badanUnggah));
+
+// 9) Hapus file: animasi keluar dulu, DELETE kemudian. Kalau API gagal, kelas `removing` dicabut —
+// tanpa itu baris yang gagal dihapus tetap tembus pandang dan tidak bisa diklik lagi.
+const badanHapus = sumberFiles.slice(sumberFiles.indexOf('const tungguAnimasi'), sumberFiles.indexOf('export async function renameFolder'));
+cek('hapus menunggu animationend sebelum memanggil API', /addEventListener\('animationend'/.test(badanHapus) && badanHapus.indexOf('tungguAnimasi(baris)') < badanHapus.indexOf("method:'DELETE'"));
+cek('animationend punya batas waktu kalau tidak pernah datang', /setTimeout\(lanjut, batasMs\)/.test(badanHapus));
+cek('kelas removing dicabut saat API gagal', /classList\.remove\('removing'\)/.test(badanHapus));
+cek('tombol .file-delete tetap terikat', /querySelectorAll\('\.file-delete'\)\.forEach/.test(sumberFiles));
+
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

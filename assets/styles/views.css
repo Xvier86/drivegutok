@@ -37,6 +37,9 @@
 .tab.active { background: var(--gold-soft); border-color: var(--gold-dark); color: var(--gold-bright); }
 .files-panel[data-tab="file"] .file-card.is-cdn,
 .files-panel[data-tab="cdn"] .file-card:not(.is-cdn) { display: none; }
+/* Baris unggah tidak ikut aturan tab di atas: kalau tidak dikecualikan, memulai unggahan dari tab CDN
+   menghasilkan bilah yang tak terlihat sampai render ulang. */
+.files-panel[data-tab="cdn"] .file-card.is-uploading { display: grid; }
 .files-panel[data-tab="file"] .empty-cdn,
 .files-panel[data-tab="cdn"] .empty-file { display: none; }
 
