@@ -63,6 +63,8 @@ SH
   cat > "$BIN/sudo" <<'SH'
 #!/usr/bin/env bash
 echo "sudo $*" >> "$LOG_UJI"
+# Buang opsi (mis. `-n` di `sudo -n true`) supaya perintahnya benar-benar dijalankan seperti sudo asli.
+while [ "${1#-}" != "${1:-}" ]; do shift; done
 exec "$@"
 SH
   chmod +x "$BIN/pm2" "$BIN/npm" "$BIN/curl" "$BIN/sudo"
@@ -269,6 +271,39 @@ kasus_deploy_tak_respond() {
   cek_sama "md5 DB produksi utuh" "$(md5_berkas "$APP/data/mydrive.sqlite")" "$MD5_DB"
 }
 
+# deploy.sh hanya memanggil vps-nginx.sh kalau konfigurasi Nginx memang belum lengkap. Di VPS nyata
+# `client_max_body_size` sudah dipasang manual, jadi syarat lama ("belum ada") tidak pernah terpenuhi:
+# `gzip on` dan `proxy_request_buffering off` tidak pernah terpasang. Kasus ini memakai folder Nginx
+# tiruan lewat NGINX_DIR/NGINX_CONF_D/NGINX_MAIN supaya tidak menyentuh /etc/nginx mesin uji.
+kasus_deploy_nginx() {
+  header "deploy.sh: Nginx belum lengkap -> vps-nginx.sh dipanggil"
+  buat_kasus
+  siapkan_remote
+  app_persiapan
+  NGINX_UJI="$KERJA/nginx-uji"
+  mkdir -p "$NGINX_UJI"
+  NGINX_ENV=(NGINX_DIR="$NGINX_UJI" NGINX_CONF_D="$KERJA/tanpa-conf-d" NGINX_MAIN="$KERJA/tanpa-nginx.conf")
+
+  # a) client_max_body_size ada (seperti di VPS), tapi gzip + buffering belum -> harus diperbaiki.
+  printf 'server {\n  server_name gutokdrive.world;\n  client_max_body_size 5G;\n}\n' > "$NGINX_UJI/gutokdrive.world"
+  # Lewat `env`: bash hanya menganggap assignment kata yang literal di script, bukan hasil ekspansi
+  # array (tanpa `env`, bash mencoba menjalankan "NGINX_DIR=..." dan keluar 127).
+  PATH="$BIN:$PATH" CURL_OK=1 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 RAPIKAN=0 env "${NGINX_ENV[@]}" \
+    bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out.log" 2>&1
+  cek_sama "exit 0 walau vps-nginx.sh tidak menemukan servernya (deploy tidak ikut gagal)" "$?" "0"
+  cek_ada "log: menyebut Nginx belum lengkap" "Nginx belum lengkap" "$KERJA/out.log"
+  cek_ada "log: vps-nginx.sh benar-benar dijalankan" "Batas upload Nginx Gutok Drive" "$KERJA/out.log"
+  cek_ada "log: kegagalan vps-nginx.sh hanya dilaporkan" "vps-nginx.sh melaporkan masalah" "$KERJA/out.log"
+  cek_sama "md5 DB produksi utuh" "$(md5_berkas "$APP/data/mydrive.sqlite")" "$MD5_DB"
+
+  # b) Ketiga direktif sudah ada -> deploy tidak menyentuh Nginx lagi.
+  printf 'server {\n  server_name gutokdrive.world;\n  client_max_body_size 5G;\n  gzip on;\n  location / { proxy_pass http://127.0.0.1:3000; proxy_request_buffering off; }\n}\n' > "$NGINX_UJI/gutokdrive.world"
+  PATH="$BIN:$PATH" CURL_OK=1 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 RAPIKAN=0 env "${NGINX_ENV[@]}" \
+    bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out2.log" 2>&1
+  cek_sama "exit" "$?" "0"
+  cek_tidak_ada "Nginx lengkap: vps-nginx.sh tidak dipanggil" "Nginx belum lengkap" "$KERJA/out2.log"
+}
+
 # deploy.sh dengan RAPIKAN=1: bersih-vps.sh wajib ikut jalan, tetapi seluruh foldernya diarahkan ke
 # fixture supaya uji ini tidak menyentuh /tmp asli, ~/.npm, atau ~/.pm2 milik mesin yang menjalankan uji.
 kasus_deploy_rapikan() {
@@ -277,18 +312,20 @@ kasus_deploy_rapikan() {
   siapkan_remote
   app_persiapan
   TMP_UJI="$KERJA/tmp-uji"
-  mkdir -p "$TMP_UJI"
+  LOGROTATE_UJI="$KERJA/logrotate-uji"
+  mkdir -p "$TMP_UJI" "$LOGROTATE_UJI"
   printf 'sisa\n' > "$TMP_UJI/deploy-LAMA.sh"
   touch -d '3 days ago' "$TMP_UJI/deploy-LAMA.sh"
   printf 'batal\n' > "$APP/data/tmp/upload-batal.bin"
   touch -d '3 days ago' "$APP/data/tmp/upload-batal.bin"
   PATH="$BIN:$PATH" CURL_OK=1 APP_DIR="$APP" BRANCH="$BRANCH" PORT=3000 RAPIKAN=1 \
     TMP_DIR="$TMP_UJI" NPM_CACHE="$KERJA/tanpa-cache" CLONE_LAMA="$KERJA/tanpa-clone" \
-    PM2_LOG_DIR="$KERJA/tanpa-log" NGINX_DIR="$KERJA/tanpa-nginx" LOGROTATE_DIR="$KERJA/tanpa-logrotate" \
+    PM2_LOG_DIR="$KERJA/tanpa-log" NGINX_DIR="$KERJA/tanpa-nginx" LOGROTATE_DIR="$LOGROTATE_UJI" \
     bash "$DIR_SCRIPT_INPUT/deploy.sh" >"$KERJA/out.log" 2>&1
   cek_sama "exit" "$?" "0"
   cek_ada "log: bersih-vps.sh dijalankan" "Rapikan VPS" "$KERJA/out.log"
   cek_ada "log: rapikan selesai" "HASIL: SELESAI" "$KERJA/out.log"
+  if [ -f "$LOGROTATE_UJI/gutok-drive-pm2" ]; then ok "logrotate PM2 ditulis ke folder uji"; else bad "logrotate PM2 tidak ditulis"; fi
   if [ -e "$TMP_UJI/deploy-LAMA.sh" ]; then bad "sisa /tmp di folder uji tidak dibuang"; else ok "sisa /tmp dibuang (folder uji)"; fi
   if [ -e "$APP/data/tmp/upload-batal.bin" ]; then bad "upload batal tidak dibuang"; else ok "upload batal dibuang"; fi
   cek_sama "md5 DB produksi utuh" "$(md5_berkas "$APP/data/mydrive.sqlite")" "$MD5_DB"
@@ -300,6 +337,7 @@ printf '### Harness script deploy Gutok Drive — tag=%s, DIR_SCRIPT=%s, fixture
 jalankan_kasus update-code "kasus_update_code"
 jalankan_kasus deploy "kasus_deploy"
 jalankan_kasus deploy-rapikan "kasus_deploy_rapikan"
+jalankan_kasus deploy-nginx "kasus_deploy_nginx"
 jalankan_kasus merge-gagal "kasus_deploy_merge_gagal"
 jalankan_kasus tak-respond "kasus_deploy_tak_respond"
 jalankan_kasus redeploy "kasus_redeploy"

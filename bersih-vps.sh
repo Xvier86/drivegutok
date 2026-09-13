@@ -191,6 +191,8 @@ else
   echo "== HASIL: ADA $GAGAL MASALAH — tempelkan seluruh output ini. =="
 fi
 if [ -n "$ukuran_awal" ] && [ -d "$APP_DIR" ]; then
-  echo "   Sisa disk $APP_DIR: $((ukuran_awal / 1024)) MB -> $(( $(df -Pk "$APP_DIR" | awk 'NR==2 {print $4}') / 1024 )) MB"
+  # Angka ini sisa partisi yang memuat APP_DIR (bukan ukuran folder), karena yang bikin upload gagal
+  # ENOSPC adalah sisa partisi, bukan sisa folder.
+  echo "   Sisa disk partisi (memuat $APP_DIR): $((ukuran_awal / 1024)) MB -> $(( $(df -Pk "$APP_DIR" | awk 'NR==2 {print $4}') / 1024 )) MB"
 fi
 exit "$GAGAL"

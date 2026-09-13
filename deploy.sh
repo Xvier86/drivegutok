@@ -87,7 +87,9 @@ pm2 save
 # Pastikan aplikasi benar-benar hidup sebelum lapor selesai.
 HEALTHY=0
 for _ in $(seq 1 20); do
-  if curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/api/setup"; then
+  # 2>/dev/null: percobaan pertama memang sering "Connection refused" (proses baru dibuat), dan
+  # pesan curl itu di log terbaca seolah deploy gagal padahal loop ini yang menunggu.
+  if curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/api/setup" 2>/dev/null; then
     HEALTHY=1
     break
   fi
@@ -113,17 +115,31 @@ case "${CMDLINE}${ENVIRON}${PM2_ENV}" in
   *) echo "!! Proses berjalan tanpa flag heap dari ecosystem.config.cjs: ${CMDLINE:-tidak terbaca}" ;;
 esac
 
-# Batas ukuran upload di Nginx: tanpa `client_max_body_size`, Nginx menjawab 413 untuk body >1 MB
-# SEBELUM Express melihatnya (aplikasi ini sendiri tidak punya batas 1 MB, lihat README bagian 11).
-# Diperbaiki otomatis kalau sudo bisa tanpa sandi; kalau tidak, cukup dicetak perintahnya.
-if [ -d /etc/nginx ] && ! grep -rqs client_max_body_size /etc/nginx/sites-enabled /etc/nginx/conf.d 2>/dev/null; then
+# Nginx: tanpa `client_max_body_size`, Nginx menjawab 413 untuk body >1 MB SEBELUM Express melihatnya
+# (aplikasi ini sendiri tidak punya batas 1 MB, lihat README bagian 11). Dua direktif lain dari
+# vps-nginx.sh diuji di sini juga, karena di VPS nyata `client_max_body_size` sudah dipasang manual
+# sehingga syarat lama ("belum ada") tidak pernah terpenuhi: `gzip on` membuat aset dikompres, dan
+# `proxy_request_buffering off` mencegah Nginx menulis ulang seluruh upload ke disk dulu (di VPS kecil
+# itu berarti pemakaian disk dua kali + timeout pada file besar).
+# Diparametrikan supaya bisa diuji (uji/skrip-deploy.sh) tanpa menyentuh /etc/nginx.
+NGINX_DIR="${NGINX_DIR:-/etc/nginx/sites-enabled}"
+NGINX_CONF_D="${NGINX_CONF_D:-/etc/nginx/conf.d}"
+NGINX_MAIN="${NGINX_MAIN:-/etc/nginx/nginx.conf}"
+NGINX_KURANG=0
+if [ -d "$NGINX_DIR" ] || [ -d "$NGINX_CONF_D" ]; then
+  for pola in 'client_max_body_size' '^[[:space:]]*gzip[[:space:]]+on' 'proxy_request_buffering'; do
+    grep -rEsq "$pola" "$NGINX_DIR" "$NGINX_CONF_D" "$NGINX_MAIN" 2>/dev/null || NGINX_KURANG=1
+  done
+fi
+
+if [ "$NGINX_KURANG" -eq 1 ]; then
   if [ -f "$APP_DIR/vps-nginx.sh" ] && { [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; }; then
-    echo ">> client_max_body_size belum ada di Nginx — memperbaiki (upload >1 MB)..."
+    echo ">> Nginx belum lengkap (batas upload / gzip / buffering) — memperbaiki dengan vps-nginx.sh..."
     SUDO_CMD=""; [ "$(id -u)" -ne 0 ] && SUDO_CMD="sudo -n"
     APP_DIR="$APP_DIR" $SUDO_CMD bash "$APP_DIR/vps-nginx.sh" || echo "!! vps-nginx.sh melaporkan masalah; lihat output di atas"
   else
-    echo "!! client_max_body_size belum ada di Nginx: upload di atas 1 MB akan dijawab 413."
-    echo "!! Jalankan sekali: sudo bash $APP_DIR/vps-nginx.sh"
+    echo "!! Konfigurasi Nginx belum lengkap (batas upload / gzip / buffering): upload di atas 1 MB"
+    echo "!! bisa dijawab 413 dan aset tidak dikompres. Jalankan sekali: sudo bash $APP_DIR/vps-nginx.sh"
   fi
 fi
 
