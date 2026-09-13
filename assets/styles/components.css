@@ -1,5 +1,8 @@
 /* Komponen bersama: tombol, kolom isian, panel, kartu file, modal, notifikasi, pemuatan, pratinjau. */
 
+/* Ikon (SVG inline dari assets/js/ikon.js) */
+.ikon { flex: none; }
+
 /* Tombol */
 .primary, .secondary {
   display: inline-flex;

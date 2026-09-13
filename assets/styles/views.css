@@ -35,6 +35,9 @@
 /* Owner control */
 .panel .provider .action-row { flex-wrap: nowrap; }
 .panel .provider .provider-meta { max-width: 44ch; }
+
+/* Member tidak melihat daftar provider; dulu ini ditulis sebagai style inline dari JS. */
+.member-view .provider-mini, .member-view .provider-label { display: none; }
 .admin-card p { color: var(--muted); font-size: 13px; }
 
 @media (max-width: 640px) {

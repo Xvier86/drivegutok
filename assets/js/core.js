@@ -1,7 +1,8 @@
 // Inti: referensi DOM, helper tampilan, pembungkus fetch, dan notifikasi.
+// Ikon dibangun sebagai SVG inline oleh ikon.js — tidak ada skrip pihak ketiga di browser.
+export { icon } from './ikon.js';
 export const app = document.querySelector('#app');
 export const toast = document.querySelector('#toast');
-export const icon = (name, size = 17) => `<i data-lucide="${name}" width="${size}" height="${size}"></i>`;
 export const esc = (value = '') => String(value).replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' }[char]));
 export const formatBytes = (bytes = 0) => bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 export const formatCapacity = (provider) => provider.capacity_bytes > 0 ? `${formatBytes(provider.used_bytes)} terpakai dari ${formatBytes(provider.capacity_bytes)}` : `${formatBytes(provider.used_bytes)} terpakai · kapasitas tidak disediakan provider`;
@@ -9,5 +10,4 @@ export const notify = (message) => { toast.textContent = message; toast.classLis
 export function showLoading(message = 'Memproses...') { if (document.querySelector('#loading-overlay')) return; document.body.insertAdjacentHTML('beforeend', `<div class="loading-overlay" id="loading-overlay"><div class="loading-card"><span class="loading-spinner"></span><strong>${esc(message)}</strong><span class="loading-dots">Mohon tunggu</span></div></div>`); }
 export function hideLoading() { document.querySelector('#loading-overlay')?.remove(); }
 export async function api(path, options = {}) { const headers = options.body instanceof FormData ? { ...(options.headers || {}) } : { 'content-type':'application/json', ...(options.headers || {}) }; const batasMs = options.body instanceof FormData ? 30 * 60 * 1000 : 15000; const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), batasMs); let response; try { response = await fetch(path, { headers, ...options, signal: controller.signal }); } catch (error) { if (error.name === 'AbortError') throw new Error('Server terlalu lama merespons. Periksa log PM2 dan konfigurasi Nginx.'); throw new Error('Server tidak dapat dihubungi. Pastikan npm start berjalan pada port yang benar.'); } finally { clearTimeout(timeout); } const contentType = response.headers.get('content-type') || ''; const data = response.status === 204 ? null : contentType.includes('application/json') ? await response.json() : { error: await response.text() }; if (!response.ok) throw new Error(data?.error || `Server error (${response.status}).`); return data; }
-export function refreshIcons() { window.lucide?.createIcons(); }
 export function animateView() { app.classList.remove('view-enter'); void app.offsetWidth; app.classList.add('view-enter'); }
