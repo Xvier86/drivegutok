@@ -44,9 +44,18 @@ const WAJIB = {
 };
 let gagal = 0;
 const tangkapan = {};
+// Bug lama: renderAdmin memasang `onclick = ke('dashboard')` tanpa dibungkus fungsi, jadi navigasi
+// ke layar file ikut berjalan SAAT render — halaman Owner control langsung terlempar balik ke
+// "Semua file". rute.dashboard diganti penghitung supaya pemanggilan diam-diam itu terlihat.
+let pindahDasbor = 0;
+const dasborAsli = rute.dashboard;
+rute.dashboard = async () => { pindahDasbor += 1; };
 for (const [nama, panggil] of [['renderDashboard', files.renderDashboard], ['bindDashboard', files.bindDashboard], ['renderTrash', trash.renderTrash], ['renderAdmin', admin.renderAdmin], ['renderLogin', login.renderLogin]]) {
   try { await panggil(); tangkapan[nama] = layar; console.log(`  ok  ${nama}`); } catch (error) { console.error(`  GAGAL  ${nama}: ${error.message}`); gagal += 1; }
 }
+rute.dashboard = dasborAsli;
+if (pindahDasbor) { console.error(`  GAGAL  renderAdmin langsung kembali ke "Semua file" (${pindahDasbor}x)`); gagal += 1; }
+else console.log('  ok  renderAdmin tidak langsung kembali ke "Semua file"');
 for (const [nama, penanda] of Object.entries(WAJIB)) {
   const hilang = penanda.filter((kelas) => !tangkapan[nama]?.includes(kelas));
   if (hilang.length) { console.error(`  GAGAL  ${nama} kehilangan penanda: ${hilang.join(', ')}`); gagal += 1; }

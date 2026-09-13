@@ -37,6 +37,12 @@ try {
   cek('upload FormData tidak dibatasi 15000 ms', !batas.includes(15000));
   cek('upload FormData dibatasi 1800000 ms', batas.includes(30 * 60 * 1000));
 
+  // Cloudflare memutus unggahan besar di 100 detik dan membalas halaman HTML 524. Dulu seluruh
+  // HTML itu jadi isi pesan galat (toast penuh tag), sehingga penyebabnya tidak bisa dibaca.
+  globalThis.fetch = async () => ({ ok: false, status: 524, headers: new Map([['content-type', 'text/html']]), text: async () => `<html><body><h1>Error 524</h1><p>A timeout occurred</p>${'x'.repeat(400)}</body></html>` });
+  const pesanHtml = await api('/api/files', { method: 'POST', body: new FormData() }).then(() => '').catch((error) => error.message);
+  cek('balasan non-JSON diringkas jadi status + cuplikan', /^Server menjawab 524: Error 524/.test(pesanHtml) && pesanHtml.length < 160 && !pesanHtml.includes('<'), pesanHtml);
+
   console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
   process.exitCode = gagal ? 1 : 0;
 } finally {
