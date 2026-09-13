@@ -106,6 +106,7 @@ PORT=3000
 STORAGE_CONFIG_KEY=ganti-dengan-secret-acak-minimal-32-karakter
 MAX_FILE_SIZE=5368709120
 TRASH_RETENTION_DAYS=30
+UPLOAD_IDLE_TIMEOUT_MS=60000
 ```
 
 Generate secret:
@@ -115,6 +116,7 @@ openssl rand -base64 48
 ```
 
 `STORAGE_CONFIG_KEY` wajib stabil. Jika berubah, credential provider yang tersimpan terenkripsi tidak bisa didekripsi lagi. `TRASH_RETENTION_DAYS` mengatur berapa hari item di Sampah disimpan sebelum dibersihkan otomatis (default 30); nilai `0` membuat item dibersihkan begitu menu Sampah dibuka.
+`UPLOAD_IDLE_TIMEOUT_MS` (default 60000) adalah batas waktu **diamnya soket** saat mengirim berkas ke provider: kalau Telegram sudah menerima seluruh berkas lalu berhenti menjawab, permintaan dijawab `502` dengan pesan yang jelas alih-alih menggantung sampai Cloudflare memutusnya di 100 detik (`524`) tanpa baris database dan tanpa catatan log. Naikkan nilainya hanya kalau providernya memang lambat menjawab setelah berkas terkirim.
 Semua variabel di atas sudah tersedia di `.env.example`. `setup.sh` menyalinnya menjadi `.env` dan mengisi `STORAGE_CONFIG_KEY` otomatis dengan hasil `openssl rand -base64 48`; `ecosystem.config.cjs` ikut disuntik nilai yang sama supaya PM2 memakai secret yang identik.
 
 Jangan menaruh token Telegram, password Mega, private key Google, atau API key di Git. Credential provider dimasukkan melalui panel Owner dan disimpan terenkripsi di SQLite.
@@ -368,15 +370,21 @@ Kalau "Nginx lokal" lulus 401 tapi URL publik masih 413, batasnya ada di Cloudfl
 
 ### File terupload ke channel Telegram tapi tidak muncul di dashboard
 
-Berkas ada di channel Telegram, tetapi tidak ada di daftar file dan log PM2 bersih. Penyebab yang paling sering: batas **100 detik** Cloudflare pada paket gratis. Unggahan besar ke Telegram dari VPS kecil bisa melewatinya, Cloudflare menjawab `524` (atau koneksinya ditutup sehingga Nginx mencatat `499`) padahal unggahan ke Telegram sudah selesai — berkas terkirim, tetapi barisnya di database tidak pernah dibuat. Periksa berurutan:
+Berkas ada di channel Telegram, tetapi tidak ada di daftar file dan log PM2 bersih. Ada dua sebab:
+
+1. **Permintaan ke provider menggantung setelah berkas terkirim** (sejak nomor 43 di `FIXES.md`, ini sudah dibatasi). `kirimMultipart()` mengirim badan multipart lalu menunggu jawaban; kalau Telegram menerima seluruh berkas tetapi jawabannya tidak pernah datang (soket mati tanpa FIN, `api.telegram.org` tersendat dari VPS), permintaan dulu menggantung tanpa batas waktu dan tidak mencatat apa pun — Cloudflare memutus klien di **100 detik** (`524`, atau `499` di log Nginx), berkas sudah ada di channel, baris database tidak pernah dibuat. Sekarang soket punya batas inaktivitas (`UPLOAD_IDLE_TIMEOUT_MS`, default 60000 ms) sehingga permintaan dijawab `502` dan dicatat sebagai `[upload] telegram gagal (...): Provider tidak menjawab ...` di `pm2 logs gutok-drive --err`. Batas ini hanya berlaku untuk soket yang diam; unggahan besar yang datanya terus mengalir tidak terpengaruh.
+2. **Batas 100 detik Cloudflare pada paket gratis** (unggahan besar yang memang lambat, mis. puluhan MB dari ponsel). `proxy_request_buffering off` di Nginx (dipasang `vps-nginx.sh`) memangkas waktu yang terbuang sebelum unggahan diteruskan, tetapi total waktu masih bisa lewat.
+
+Periksa berurutan:
 
 ```bash
-grep -E 'POST /api/files' /var/log/nginx/access.log | tail -5   # 499/524 = permintaan mati di tengah jalan
-pm2 logs gutok-drive --lines 30 --nostream --err                # harus kosong kalau memang batas Cloudflare
+sudo grep -E 'POST /api/files' /var/log/nginx/access.log | tail -5   # 499/524 = permintaan mati di tengah jalan, 502 = provider gagal
+pm2 logs gutok-drive --lines 30 --nostream --err                    # '[upload] telegram gagal ...' = sebab nomor 1
 sqlite3 /var/www/gutok-drive/data/mydrive.sqlite "SELECT name, size, uploaded_at FROM files ORDER BY uploaded_at DESC LIMIT 5;"
+ls -la /var/www/gutok-drive/data/tmp                                # berkas sisa = proses mati saat upload, bukan selesai dengan galat
 ```
 
-Kalau barisnya tidak ada padahal berkasnya ada di Telegram: hapus berkas itu dari channel, lalu unggah ulang lewat subdomain DNS-only (tanpa proxy Cloudflare) atau perkecil berkasnya. `proxy_request_buffering off` di Nginx (dipasang `vps-nginx.sh`) memangkas waktu yang terbuang sebelum unggahan mulai diteruskan.
+Kalau barisnya tidak ada padahal berkasnya ada di Telegram: berkas itu tidak bisa dipulihkan (id-nya hanya ada di jawaban yang hilang), jadi hapus dari channel lalu unggah ulang — lewat subdomain DNS-only (tanpa proxy Cloudflare) atau dengan berkas yang lebih kecil.
 
 ### Audio/video terupload tetapi tidak bisa diputar di preview
 

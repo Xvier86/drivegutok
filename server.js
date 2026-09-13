@@ -250,6 +250,9 @@ function refreshCapacityInBackground(provider) {
 // fetch() Node (undici) menahan seluruh badan request di memori sebelum mengirim — terukur file
 // 96 MB menaikkan RSS ±130 MB — sedangkan pipa node:http hanya ±20 MB. Karena itu jalur upload
 // provider memakai fungsi ini, bukan fetch/FormData.
+// Batas waktu inaktivitas soket (ms) saat mengirim berkas ke provider. Data yang terus mengalir
+// tidak kena; yang dihentikan hanya provider yang diam setelah badan request terkirim.
+const UPLOAD_IDLE_TIMEOUT_MS = Number(process.env.UPLOAD_IDLE_TIMEOUT_MS || 60000);
 function kirimMultipart({ url, headers = {}, bagian }) {
   const panjang = bagian.reduce((total, item) => total + (item.buffer ? item.buffer.length : item.size), 0);
   const alamat = new URL(url);
@@ -264,6 +267,13 @@ function kirimMultipart({ url, headers = {}, bagian }) {
         try { body = JSON.parse(teks); } catch {}
         resolve({ ok: respons.statusCode >= 200 && respons.statusCode < 300, status: respons.statusCode, body });
       });
+    });
+    // Kalau provider menerima seluruh badan request lalu berhenti menjawab (soket mati tanpa FIN),
+    // promise ini dulu menggantung tanpa batas. Akibatnya berkas sudah ada di channel Telegram,
+    // Cloudflare sudah memutus klien di 100 detik (524/499), dan baris database tidak pernah dibuat
+    // — sementara log server tetap bersih karena tidak ada yang mencatat kegagalan itu.
+    permintaan.setTimeout(UPLOAD_IDLE_TIMEOUT_MS, () => {
+      permintaan.destroy(new Error(`Provider tidak menjawab dalam ${Math.round(UPLOAD_IDLE_TIMEOUT_MS / 1000)} detik setelah berkas terkirim.`));
     });
     permintaan.on('error', reject);
     void (async () => {
@@ -778,6 +788,10 @@ app.post('/api/files', requireUser, upload.single('file'), async (req, res) => {
   if (encrypted) uploadFile = await encryptUpload(file);
   const size = uploadFile.size;
   if (provider.capacity_bytes > 0 && provider.used_bytes + size > provider.capacity_bytes) { fs.rmSync(file.path, { force: true }); return json(res, { error: 'Kapasitas provider tidak mencukupi.' }, 409); }
+  // Membedakan "provider gagal" dari "klien sudah pergi" penting saat membaca log: Cloudflare
+  // memutus permintaan di 100 detik, dan tanpa penanda ini penyebabnya tidak bisa dipisahkan.
+  let dibatalkan = false;
+  res.on('close', () => { if (!res.writableEnded) dibatalkan = true; });
   try {
     const uploaded = await uploadToProvider(uploadFile, provider, safeName(name), mimeType);
     const fileId = id();
@@ -785,7 +799,10 @@ app.post('/api/files', requireUser, upload.single('file'), async (req, res) => {
     const record = { id: fileId, owner_id: req.user.id, folder_id: req.body.folderId || null, name: safeName(name), mime_type: mimeType, size: uploaded.size, provider: provider.id, remote_file_id: remoteFileId, uploaded_by: req.user.id, uploaded_at: now(), cdn_enabled: isCdnMime(mimeType) && !encrypted ? 1 : 0, cdn_slug: isCdnMime(mimeType) && !encrypted ? newCdnSlug() : null, encrypted: encrypted ? 1 : 0, retention_type: retentionType, retention_value: retentionValue, expires_at: expiresAt };
     db.prepare('INSERT INTO files (id, owner_id, folder_id, name, mime_type, size, provider, remote_file_id, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(record.id, record.owner_id, record.folder_id, record.name, record.mime_type, record.size, record.provider, record.remote_file_id, record.uploaded_by, record.uploaded_at, record.cdn_enabled, record.cdn_slug, record.encrypted, record.retention_type, record.retention_value, record.expires_at);
     db.prepare('UPDATE providers SET used_bytes = used_bytes + ? WHERE id = ?').run(record.size, provider.id); audit(req.user.id, 'upload', 'file', record.id); return json(res, record, 201);
-  } catch (error) { return json(res, { error: `Upload ${provider.kind} gagal: ${error.message}` }, 502); }
+  } catch (error) {
+    console.error(`[upload] ${provider.kind} gagal${dibatalkan ? ' (klien memutus permintaan)' : ''} (${safeName(name)}, ${size} byte): ${error.message}`);
+    return json(res, { error: `Upload ${provider.kind} gagal: ${error.message}` }, 502);
+  }
   finally { fs.rmSync(file.path, { force: true }); if (uploadFile !== file) fs.rmSync(uploadFile.path, { force: true }); }
 });
 app.post('/api/files/cdn', requireUser, (req, res, next) => cdnUpload.single('file')(req, res, (error) => error ? json(res, { error: 'File CDN maksimal 5 MB.' }, 413) : next()), async (req, res) => {
@@ -805,7 +822,10 @@ app.post('/api/files/cdn', requireUser, (req, res, next) => cdnUpload.single('fi
     const record = { id: id(), owner_id: req.user.id, folder_id: req.body.folderId || null, name: safeName(name), mime_type: mimeType, size: uploaded.size, provider: provider.id, remote_file_id: uploaded.remoteFileId, uploaded_by: req.user.id, uploaded_at: now(), cdn_enabled: 1, cdn_slug: newCdnSlug(), encrypted: 0, retention_type: retentionType, retention_value: retentionValue, expires_at: expiresAt };
     db.prepare('INSERT INTO files (id, owner_id, folder_id, name, mime_type, size, provider, remote_file_id, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(record.id, record.owner_id, record.folder_id, record.name, record.mime_type, record.size, record.provider, record.remote_file_id, record.uploaded_by, record.uploaded_at, record.cdn_enabled, record.cdn_slug, record.encrypted, record.retention_type, record.retention_value, record.expires_at);
     db.prepare('UPDATE providers SET used_bytes = used_bytes + ? WHERE id = ?').run(record.size, provider.id); audit(req.user.id, 'upload_cdn', 'file', record.id); return json(res, { ...record, cdnUrl: `/cdn/${record.cdn_slug}` }, 201);
-  } catch (error) { return json(res, { error: `Upload CDN gagal: ${error.message}` }, 502); }
+  } catch (error) {
+    console.error(`[upload] cdn gagal (${safeName(name)}, ${file.size} byte): ${error.message}`);
+    return json(res, { error: `Upload CDN gagal: ${error.message}` }, 502);
+  }
   finally { fs.rmSync(file.path, { force: true }); }
 });
 app.get('/api/files/:id/download', requireUser, async (req, res) => { const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return json(res, { error: 'File tidak ditemukan.' }, 404); try { return await sendRemoteFile(res, file, provider, 'inline', req.headers.range); } catch (error) { return json(res, { error: error.message }, 502); } });

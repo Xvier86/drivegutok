@@ -5,6 +5,9 @@
 //      menghapus file ke provider tanpa batas waktu, jadi request menggantung selamanya.
 //   3. "audio/video tidak terbaca"    -> server mengabaikan header Range: pemutar hanya dapat
 //      respons 200 penuh, Safari menolak memutar media tanpa 206, dan menggeser posisi putar gagal.
+//   4. "berkas ada di Telegram tapi tidak ada di dashboard" -> setelah badan multipart selesai
+//      dikirim, permintaan ke provider menunggu jawaban tanpa batas waktu; permintaan menggantung
+//      (Cloudflare memutusnya di 100 detik) dan baris database tidak pernah dibuat.
 // Jalankan dari mana pun: node uji/server-lambat.mjs
 //
 // Cara kerja: server.js disalin ke folder sementara (node_modules di-symlink), provider Google
@@ -42,6 +45,11 @@ const portBlackhole = blackhole.address().port;
 // byte bisa dibandingkan langsung. server.js membaca TELEGRAM_API_BASE, jadi tidak perlu tambalan.
 const isiMedia = Buffer.from('ABCDEFGHIJKLMNOP');
 const telegramPalsu = http.createServer((req, res) => {
+  // getChat harus menjawab supaya jalur unggah benar-benar berjalan sampai kirimMultipart().
+  if (req.url.includes('/getChat')) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, result: { id: 123, type: 'channel', title: 'uji' } }));
+  // sendDocument menerima seluruh badan request lalu diam selamanya: inilah keadaan "berkas sudah
+  // sampai di Telegram, jawabannya tidak pernah datang" yang dulu menggantung tanpa batas.
+  if (req.url.includes('/sendDocument')) { req.resume(); return; }
   if (req.url.includes('/getFile')) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, result: { file_path: 'docs/uji.bin' } }));
   const rentang = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
   if (!rentang) return res.writeHead(200, { 'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-length': String(isiMedia.length) }).end(isiMedia);
@@ -65,7 +73,7 @@ const serviceAccountJson = JSON.stringify({
 
 const anak = spawn('node', ['server.js'], {
   cwd: kerja,
-  env: { ...process.env, PORT: String(portApp), NODE_ENV: 'test', STORAGE_CONFIG_KEY: 'kunci-uji', TRASH_RETENTION_DAYS: '30', TELEGRAM_API_BASE: `http://127.0.0.1:${portTelegram}` },
+  env: { ...process.env, PORT: String(portApp), NODE_ENV: 'test', STORAGE_CONFIG_KEY: 'kunci-uji', TRASH_RETENTION_DAYS: '30', TELEGRAM_API_BASE: `http://127.0.0.1:${portTelegram}`, UPLOAD_IDLE_TIMEOUT_MS: '800' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let logAnak = '';
@@ -168,6 +176,35 @@ try {
   cek('permintaan Range dijawab 206 + Content-Range', rentang.status === 206 && rentang.headers.get('content-range') === `bytes 4-7/${isiMedia.length}`, `status=${rentang.status} content-range=${rentang.headers.get('content-range')}`);
   cek('Accept-Ranges diteruskan dari provider', rentang.headers.get('accept-ranges') === 'bytes', `accept-ranges=${rentang.headers.get('accept-ranges')}`);
   cek('isi potongan sesuai rentang', potongan === 'EFGH', `isi=${potongan}`);
+
+  // Keluhan VPS: "audio/video 6,6 MB terupload ke Telegram tapi tidak terbaca di dashboard" —
+  // berkas ada di channel, log PM2 bersih, dan baris database tidak ada. Penyebabnya: setelah
+  // badan multipart selesai dikirim, kirimMultipart() menunggu jawaban provider tanpa batas waktu,
+  // jadi permintaan menggantung (Cloudflare memutusnya di 100 detik) dan baris database tidak
+  // pernah dibuat. Provider Telegram di uji ini menerima badan request lalu diam; UPLOAD_IDLE_TIMEOUT_MS=800
+  // supaya keadaannya bisa direproduksi dalam satu detik.
+  const form = new FormData();
+  form.set('providerId', String(telegramId));
+  form.set('name', 'putus.din');
+  form.set('mimeType', 'audio/mpeg');
+  form.set('file', new Blob([Buffer.alloc(64 * 1024, 7)], { type: 'audio/mpeg' }), 'putus.mp3');
+  const mulaiUnggah = Date.now();
+  const unggah = await api('/api/files', { method: 'POST', headers: { cookie }, body: form });
+  const jawabUnggah = await unggah.json().catch(() => null);
+  const msUnggah = Date.now() - mulaiUnggah;
+  cek('unggahan ke provider yang diam dijawab 502, tidak menggantung', unggah.status === 502 && msUnggah < 5000, `status=${unggah.status} ${msUnggah}ms`);
+  cek('pesan galat menyebut provider tidak menjawab', /tidak menjawab/.test(jawabUnggah?.error || ''), jawabUnggah?.error || '');
+  await new Promise((r) => setTimeout(r, 300));
+  cek('kegagalan unggah tercatat di log server', /\[upload\] telegram gagal/.test(logAnak), 'mencari "[upload] telegram gagal"');
+  const dbHitung = new Database(path.join(kerja, 'data', 'mydrive.sqlite'));
+  const barisFile = dbHitung.prepare('SELECT COUNT(*) AS jumlah FROM files').get().jumlah;
+  dbHitung.close();
+  // Berkas yatim di channel Telegram memang tidak bisa dipulihkan (file_id hanya ada di jawaban
+  // yang hilang), jadi yang dijaga di sini: kegagalan terlihat, tidak menggantung, dan tidak
+  // meninggalkan berkas sementara di data/tmp.
+  cek('baris database tidak dibuat untuk unggahan yang gagal', barisFile === 2, `baris=${barisFile}`);
+  const sisaTmp = fs.readdirSync(path.join(kerja, 'data', 'tmp')).length;
+  cek('berkas sementara data/tmp tetap dibersihkan', sisaTmp === 0, `sisa=${sisaTmp}`);
 } catch (error) {
   cek('permintaan selesai tanpa error', false, error.message);
 }
