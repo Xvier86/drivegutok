@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check cleanup.js && for f in assets/app.js assets/js/*.js assets/js/views/*.js; do node --check \"$f\" || exit 1; done && node uji-lingkup-app.mjs && node uji-upload.mjs && node uji-layar.mjs"
+    "check": "node --check server.js && node --check cleanup.js && for f in assets/app.js assets/js/*.js assets/js/views/*.js; do node --check \"$f\" || exit 1; done && node uji-lingkup-app.mjs && node uji-upload.mjs && node uji-layar.mjs && node uji-gaya.mjs"
   },
   "engines": {
     "node": ">=20"

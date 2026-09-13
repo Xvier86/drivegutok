@@ -1,0 +1,45 @@
+/* Token desain: satu sumber untuk warna, jarak, radius, tipografi, dan gerak.
+   Palet diambil dari logo Gutok: dasar cokelat tua hangat dengan aksen emas. */
+:root {
+  color-scheme: dark;
+
+  --ink: #100e08;
+  --ink-soft: #17140d;
+  --panel: #1e1a11;
+  --panel-soft: #262014;
+  --line: #3a3220;
+  --line-soft: #2a2416;
+
+  --paper: #f7f1e2;
+  --muted: #a99b7c;
+  --muted-strong: #cdbf9c;
+
+  --gold: #e7b93f;
+  --gold-bright: #ffd968;
+  --gold-dark: #8a6f24;
+  --gold-soft: rgba(231, 185, 63, 0.12);
+  --danger: #e2684f;
+
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --font-ui: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Space Grotesk', 'DM Sans', system-ui, sans-serif;
+
+  --shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 8px 22px rgba(0, 0, 0, 0.28);
+
+  --motion: 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  --sidebar: 264px;
+  --content: 1360px;
+}
