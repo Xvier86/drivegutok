@@ -3,7 +3,7 @@
 //      (token Google / login Mega) sampai PROVIDER_TIMEOUT_MS.
 //   2. "Sampah tidak bisa dibuka"     -> GET /api/trash dulu menunggu pembersihan otomatis yang
 //      menghapus file ke provider tanpa batas waktu, jadi request menggantung selamanya.
-// Jalankan dari root project: node uji-server-lambat.mjs
+// Jalankan dari mana pun: node uji/server-lambat.mjs
 //
 // Cara kerja: server.js disalin ke folder sementara (node_modules di-symlink), provider Google
 // palsu diarahkan ke server TCP "blackhole" yang menerima koneksi tapi tidak pernah menjawab.
@@ -18,7 +18,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const root = path.dirname(fileURLToPath(import.meta.url));
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const kerja = fs.mkdtempSync(path.join(os.tmpdir(), 'uji-server-lambat-'));
 const gagal = [];
 const cek = (nama, syarat, detail = '') => {

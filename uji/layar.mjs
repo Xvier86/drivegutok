@@ -18,12 +18,12 @@ const jawaban = {
 };
 globalThis.fetch = async (url) => ({ ok: true, status: 200, headers: new Map([['content-type', 'application/json']]), json: async () => jawaban[String(url).split('?')[0]] || {} });
 
-const { rute } = await import('./assets/js/router.js');
-const { state } = await import('./assets/js/state.js');
-const files = await import('./assets/js/views/files.js');
-const admin = await import('./assets/js/views/admin.js');
-const trash = await import('./assets/js/views/trash.js');
-const login = await import('./assets/js/views/login.js');
+const { rute } = await import('../assets/js/router.js');
+const { state } = await import('../assets/js/state.js');
+const files = await import('../assets/js/views/files.js');
+const admin = await import('../assets/js/views/admin.js');
+const trash = await import('../assets/js/views/trash.js');
+const login = await import('../assets/js/views/login.js');
 
 state.user = { id: 'u1', username: 'vier', role: 'owner' };
 Object.assign(rute, { dashboard: files.renderDashboard, admin: admin.renderAdmin, trash: trash.renderTrash, login: login.renderLogin });

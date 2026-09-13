@@ -6,6 +6,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+// Path aset selalu relatif ke akar repo, bukan ke folder uji/.
+const akar = new URL('../', import.meta.url);
+
 const BERKAS = [
   'assets/app.js',
   'assets/js/core.js',
@@ -24,7 +27,7 @@ const cek = (keterangan, syarat) => { if (syarat) console.log(`  ok  ${keteranga
 // Deteksi impor melingkar antar modul aplikasi.
 const impor = new Map();
 for (const berkas of BERKAS) {
-  const src = fs.readFileSync(berkas, 'utf8');
+  const src = fs.readFileSync(new URL(berkas, akar), 'utf8');
   impor.set(berkas, [...src.matchAll(/^import[^']*'(\.[^']+)'/gm)]
     .map((m) => path.normalize(path.join(path.dirname(berkas), m[1])))
     .filter((tujuan) => BERKAS.includes(tujuan)));
@@ -51,7 +54,7 @@ globalThis.fetch = async () => ({ ok: true, status: 200, headers: new Map([['con
 process.on('unhandledRejection', () => {});
 
 const lingkup = {};
-for (const berkas of BERKAS) Object.assign(lingkup, await import(new URL(`./${berkas}`, import.meta.url)));
+for (const berkas of BERKAS) Object.assign(lingkup, await import(new URL(berkas, akar)));
 for (const nama of WAJIB) cek(`${nama} ter-export`, typeof lingkup[nama] === 'function');
 
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');

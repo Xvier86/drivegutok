@@ -1,5 +1,5 @@
 // Uji cepat cleanup.js tanpa menyentuh data asli dan tanpa jaringan.
-// Jalankan dari root project: node uji-cleanup.mjs
+// Jalankan dari mana pun: node uji/cleanup.mjs
 //
 // Cara kerja: cleanup.js dan skema SQLite minimal disalin ke folder sementara (node_modules
 // di-symlink), lalu:
@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = path.dirname(fileURLToPath(import.meta.url));
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const kerja = fs.mkdtempSync(path.join(os.tmpdir(), 'uji-cleanup-'));
 const gagal = [];
 

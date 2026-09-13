@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Uji script deploy Gutok Drive di VPS palsu.
-# Pemakaian: bash harness.sh DIR_SCRIPT [tag]     (env: LEWATI=bersih,setup untuk melewati kasus)
+# Pindah ke uji/ bersama uji yang lain, jadi DIR_SCRIPT diisi AKAR repo (tempat *.sh deploy).
+# Pemakaian: bash uji/skrip-deploy.sh AKAR_REPO [tag]     (env: LEWATI=bersih,setup untuk melewati kasus)
 #
 # VPS palsu: pm2 / npm / curl / sudo diganti stub (semua panggilan dicatat ke panggilan.log),
 # fixture = clone repo ini di commit 0d80ab8 (rilis lama yang masih melacak
@@ -8,7 +9,7 @@
 # selamat sampai selesai. Semua pemeriksaan dicetak [OK]/[GAGAL].
 set -u
 
-DIR_SCRIPT_INPUT="${1:?pakai: bash harness.sh DIR_SCRIPT [tag]}"
+DIR_SCRIPT_INPUT="${1:?pakai: bash uji/skrip-deploy.sh AKAR_REPO [tag]}"
 TAG_SEMUA="${2:-tanpa-tag}"
 REPO="${REPO:-/home/vier/drivegutok}"
 FIXTURE_COMMIT="${FIXTURE_COMMIT:-0d80ab8}"

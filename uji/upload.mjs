@@ -5,8 +5,8 @@
 // dengan pesan "Server terlalu lama merespons" dan file tidak pernah masuk.
 import fs from 'node:fs';
 
-const berkas = new URL('./assets/app.js', import.meta.url);
-const uji = new URL('./assets/.probe-upload.mjs', import.meta.url);
+const berkas = new URL('../assets/app.js', import.meta.url);
+const uji = new URL('../assets/.probe-upload.mjs', import.meta.url);
 fs.writeFileSync(uji, `${fs.readFileSync(berkas, 'utf8')}\nglobalThis.__api = api;\n`);
 
 const el = new Proxy(function () {}, { get: () => el, set: () => true, apply: () => el, has: () => true });

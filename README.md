@@ -4,6 +4,39 @@ Cloud storage multi-provider berbasis Node.js, Express, dan SQLite. File dikirim
 
 Deployment hanya untuk VPS (PM2 + Nginx). Tidak ada target Cloudflare Workers/D1/KV — cukup Node.js dan satu VPS.
 
+## Struktur Project
+
+```
+drivegutok/
+├─ server.js               seluruh backend: API, provider, otentikasi, enkripsi config
+├─ cleanup.js              pembersih Sampah otomatis (dipanggil PM2/cron)
+├─ ecosystem.config.cjs    konfigurasi PM2
+├─ *.sh                    setup.sh, deploy.sh, redeploy.sh, update-code.sh, deploy-bersih.sh, perbaiki-vps.sh
+├─ assets/                 satu-satunya folder yang dikirim ke browser (express.static)
+│  ├─ index.html           kerangka halaman: hanya #app dan #toast
+│  ├─ logo.jpg
+│  ├─ app.js               titik masuk: daftar rute, listener global, start()
+│  ├─ js/                  core.js (api/toast/helper), router.js (ke()), state.js
+│  │  └─ views/            login.js, files.js, admin.js, trash.js
+│  └─ styles/              tokens.css, base.css, components.css, views.css
+├─ uji/                    semua uji otomatis
+├─ data/, storage/         runtime, tidak dilacak Git
+└─ README.md, FIXES.md     dokumen ini dan catatan perbaikan
+```
+
+Script `*.sh` sengaja tetap di akar repo karena alur VPS memanggilnya dengan nama itu (`bash deploy.sh`, `cp ~/drivegutok/update-code.sh /var/www/gutok-drive/`), dan `uji/skrip-deploy.sh` berlatih dengan cara menyalin semua `*.sh` dari akar repo.
+
+### Uji
+
+```bash
+npm run check                  # sintaks semua berkas + uji cepat
+npm run uji                    # lingkup modul, batas waktu upload, render tiap layar, gaya CSS
+npm run uji:berat              # cleanup.js dan server lambat (menyalin server.js ke folder sementara)
+bash uji/skrip-deploy.sh .     # latihan deploy di VPS palsu (pm2/npm/curl diganti stub)
+```
+
+Semua uji di `uji/` boleh dijalankan dari folder mana pun dan tidak menyentuh `data/` maupun `storage/` produksi.
+
 ## 1. Prasyarat VPS
 
 - Ubuntu/Debian Linux.
