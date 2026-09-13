@@ -80,9 +80,14 @@ if (tokenHilang.length) console.error(`        token hilang: ${tokenHilang.join(
 // menghasilkan SVG kosong (tombol tanpa ikon) tanpa error apa pun di browser.
 const petaIkon = new Set([...baca('assets/js/ikon.js').matchAll(/^\s+'([a-z0-9-]+)':/gm)].map((m) => m[1]));
 const dipakaiIkon = new Set();
+// Nama ikon juga diambil dari dalam ekspresi: `icon(a === 'application/pdf' ? 'file-text' : 'file')`
+// dan peta ikonMime() di state.js dulu lolos dari pemeriksaan versi lama, sehingga 'image', 'video',
+// dan 'file-text' tidak pernah terdaftar di ikon.js padahal dipakai (kartu media tanpa ikon).
+const catatLiteral = (teks) => { for (const m of teks.matchAll(/'([^']*)'/g)) if (/^[a-z0-9-]+$/.test(m[1])) dipakaiIkon.add(m[1]); };
 for (const berkas of [...berkasJs, ...berkasCss]) {
-  for (const m of baca(berkas).matchAll(/icon\(['"]([a-z0-9-]+)['"]/g)) dipakaiIkon.add(m[1]);
+  for (const m of baca(berkas).matchAll(/icon\(([^)\n]*)/g)) catatLiteral(m[1]);
 }
+catatLiteral(baca('assets/js/state.js').match(/ikonMime = [^;]+/)?.[0] || '');
 const ikonHilang = [...dipakaiIkon].filter((nama) => !petaIkon.has(nama)).sort();
 cek(`semua nama ikon terdaftar di ikon.js (${dipakaiIkon.size} ikon dipakai)`, ikonHilang.length === 0);
 if (ikonHilang.length) console.error(`        ikon hilang: ${ikonHilang.join(', ')}`);

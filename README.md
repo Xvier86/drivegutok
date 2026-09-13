@@ -366,6 +366,33 @@ sudo bash vps-nginx.sh      # mengisi 5G + reload + uji body 2 MB dan 6 MB
 
 Kalau "Nginx lokal" lulus 401 tapi URL publik masih 413, batasnya ada di Cloudflare (paket gratis 100 MB) — pakai subdomain DNS-only untuk upload besar. Kalau keduanya lulus tapi upload tetap gagal, periksa sisa disk VPS: multer menulis file ke `data/tmp` dulu (`df -h /var/www`).
 
+### File terupload ke channel Telegram tapi tidak muncul di dashboard
+
+Berkas ada di channel Telegram, tetapi tidak ada di daftar file dan log PM2 bersih. Penyebab yang paling sering: batas **100 detik** Cloudflare pada paket gratis. Unggahan besar ke Telegram dari VPS kecil bisa melewatinya, Cloudflare menjawab `524` (atau koneksinya ditutup sehingga Nginx mencatat `499`) padahal unggahan ke Telegram sudah selesai — berkas terkirim, tetapi barisnya di database tidak pernah dibuat. Periksa berurutan:
+
+```bash
+grep -E 'POST /api/files' /var/log/nginx/access.log | tail -5   # 499/524 = permintaan mati di tengah jalan
+pm2 logs gutok-drive --lines 30 --nostream --err                # harus kosong kalau memang batas Cloudflare
+sqlite3 /var/www/gutok-drive/data/mydrive.sqlite "SELECT name, size, uploaded_at FROM files ORDER BY uploaded_at DESC LIMIT 5;"
+```
+
+Kalau barisnya tidak ada padahal berkasnya ada di Telegram: hapus berkas itu dari channel, lalu unggah ulang lewat subdomain DNS-only (tanpa proxy Cloudflare) atau perkecil berkasnya. `proxy_request_buffering off` di Nginx (dipasang `vps-nginx.sh`) memangkas waktu yang terbuang sebelum unggahan mulai diteruskan.
+
+### Audio/video terupload tetapi tidak bisa diputar di preview
+
+Ada dua sebab yang berbeda.
+
+1. **Container-nya memang tidak didukung browser** (`.mkv`, `.avi`, `.opus`): preview menampilkan pesan + tombol download, bukan pemutar kosong, karena `canPlayType()` diperiksa lebih dulu. Ubah ke MP4 (video) atau MP3 (audio) kalau ingin diputar langsung.
+2. **Server tidak melayani `Range`**: pemutar butuh `206 Partial Content` (Safari menolak memutar media tanpanya) dan menggeser posisi putar butuh `Accept-Ranges`. Ini ditangani `sendRemoteFile` dan dijaga `node uji/server-lambat.mjs`. Jawaban rusak yang terlanjur tersimpan di cache Cloudflare masih bisa tersangkut — purge URL berkasnya kalau gejalanya bertahan setelah deploy.
+
+### Perubahan CSS/JS tidak terlihat setelah deploy
+
+Cloudflare menimpa `max-age` aset statis dengan Browser Cache TTL miliknya (terukur: `5 menit` jadi `4 jam`), jadi browser bisa memakai CSS/JS lama berjam-jam setelah deploy — gejalanya menyesatkan, misalnya "menu Owner control mati" atau "bilah storage kosong" walau berkas di server sudah benar. Karena itu `server.js` mengirim `no-cache` untuk `/app.js`, `/js/*.js`, `/styles/*.css`, dan `index.html` (browser memvalidasi ulang lewat ETag → 304), sedangkan gambar tetap boleh di-cache 1 hari. Kalau ragu, bandingkan isi yang benar-benar dikirim:
+
+```bash
+curl -s https://gutokdrive.world/styles/components.css | grep -c storage-bar   # 1 = versi baru
+```
+
 ### Tombol dashboard tidak bereaksi (Owner control, Upload file, Sampah, logout)
 
 Gejala: halaman dashboard tampil normal, tapi semua tombol di dalamnya diam — tidak ada pesan error apa pun. Ini pernah terjadi karena `bindDashboard()` tetap ada di daftar impor `assets/app.js` tetapi tidak pernah dipanggil setelah refactor modul (commit `a2374c7`). Setelah itu `bindDashboard()` diberi penjaga (`if (!document.querySelector('#upload-trigger')) return;`) supaya aman dipanggil di layar lain. Untuk memastikan rilis di VPS memuat perbaikannya:

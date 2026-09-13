@@ -400,24 +400,30 @@ async function deleteFromProvider(file, provider) {
   if (provider.kind === 'mega') return deleteFromMega(remoteFileId, config);
   return { skipped: true, reason: `Provider ${provider.kind} tidak didukung untuk penghapusan remote.` };
 }
-async function sendRemoteFile(res, file, provider, disposition = 'inline') {
+async function sendRemoteFile(res, file, provider, disposition = 'inline', rangeHeader = '') {
   const config = decryptConfig(provider.config_json);
   const encryptedMatch = file.remote_file_id.match(/^enc:([^:]+):(.+)$/);
   const remoteFileId = encryptedMatch ? encryptedMatch[2] : file.remote_file_id;
+  // Rentang hanya diteruskan untuk berkas yang tidak terenkripsi: aliran dekripsi AES-CTR tidak
+  // punya offset byte yang sama dengan berkas di provider.
+  const mintaRentang = rangeHeader && !encryptedMatch ? rangeHeader : '';
   let source;
+  let upstream = null;
   let closeProvider = () => {};
   if (provider.kind === 'telegram') {
     const telegramParts = remoteFileId.split(':');
     const fileId = telegramParts.length >= 4 ? telegramParts[3] : telegramParts[1]; // format baru: telegram:chatId:messageId:fileId, lama: telegram:fileId
     const info = await fetch(`${TELEGRAM_API}/bot${config.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`).then((result) => result.json());
     if (!info.ok) throw new Error(info.description || 'Telegram file tidak ditemukan.');
-    const response = await fetch(`${TELEGRAM_FILE_API}/bot${config.botToken}/${info.result.file_path}`);
+    const response = await fetch(`${TELEGRAM_FILE_API}/bot${config.botToken}/${info.result.file_path}`, mintaRentang ? { headers: { range: mintaRentang } } : undefined);
     if (!response.ok || !response.body) throw new Error(`Provider telegram mengembalikan HTTP ${response.status}.`);
+    upstream = response;
     source = Readable.fromWeb(response.body);
   } else if (provider.kind === 'gdrive') {
     const fileId = remoteFileId.replace('gdrive:', '');
-    const response = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${await getGoogleAccessToken(config)}` } });
+    const response = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${await getGoogleAccessToken(config)}`, ...(mintaRentang ? { range: mintaRentang } : {}) } });
     if (!response.ok || !response.body) throw new Error(`Provider gdrive mengembalikan HTTP ${response.status}.`);
+    upstream = response;
     source = Readable.fromWeb(response.body);
   } else if (provider.kind === 'mega') {
     // Sebelumnya jalur ini belum ada sehingga download/preview file Mega selalu gagal.
@@ -432,8 +438,19 @@ async function sendRemoteFile(res, file, provider, disposition = 'inline') {
   } else {
     throw new Error(`Download dari provider ${provider.kind} belum didukung.`);
   }
-  // Content-Length tidak dikirim supaya respons memakai chunked transfer. Ini menghindari
-  // respons menggantung kalau ukuran asli di provider tidak sama dengan metadata (mis. file terenkripsi).
+  // Rentang diteruskan balik apa adanya (206 + Content-Range + Content-Length). Tanpa ini pemutar
+  // audio/video harus mengunduh seluruh berkas dulu dan tidak bisa menggeser posisi putar; Safari
+  // menolak memutar media sama sekali kalau server tidak melayani Range.
+  if (upstream?.headers.get('accept-ranges')) res.setHeader('Accept-Ranges', upstream.headers.get('accept-ranges'));
+  const contentRange = upstream?.headers.get('content-range');
+  if (contentRange) {
+    res.status(206);
+    res.setHeader('Content-Range', contentRange);
+    const panjangRentang = upstream.headers.get('content-length');
+    if (panjangRentang) res.setHeader('Content-Length', panjangRentang);
+  }
+  // Content-Length tidak dikirim untuk respons penuh supaya respons memakai chunked transfer. Ini
+  // menghindari respons menggantung kalau ukuran asli di provider tidak sama dengan metadata.
   res.setHeader('Content-Type', file.mime_type);
   res.setHeader('Content-Disposition', `${disposition}; filename="${safeName(file.name)}"`);
   const output = encryptedMatch ? source.pipe(crypto.createDecipheriv('aes-256-ctr', configKey, Buffer.from(encryptedMatch[1], 'base64url'))) : source;
@@ -467,11 +484,14 @@ app.use((req, res, next) => {
   if (/\.(env|sqlite|sqlite3|db|pem|key|log)$/i.test(req.path) || /(^|\/)(server\.js|package-lock\.json|ecosystem\.config\.cjs)(\/|$)/i.test(req.path)) return res.status(404).end();
   return next();
 });
-// Aset belum ber-hash: cache browser dibatasi 5 menit dan index.html selalu divalidasi ulang,
-// supaya deploy berikutnya langsung terlihat. Cache panjang diserahkan ke Cloudflare/Nginx.
+// Aset belum ber-hash: Cloudflare menimpa max-age aset statis dengan Browser Cache TTL miliknya
+// (terukur di produksi: 5 menit jadi 4 jam), jadi setelah deploy browser masih memakai CSS/JS lama
+// sampai berjam-jam. Gejalanya sulit dilacak: menu Owner control mati dan bilah Drive Storage kosong
+// padahal berkas di server sudah benar. Karena itu JS/CSS/HTML dikirim `no-cache` — browser selalu
+// memvalidasi ulang lewat ETag (304, murah) sehingga versi baru langsung terpakai.
 app.use(express.static(path.join(root, 'assets'), {
   maxAge: '5m',
-  setHeaders: (res, berkas) => { if (berkas.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); },
+  setHeaders: (res, berkas) => { res.setHeader('Cache-Control', /\.(js|css|html)$/.test(berkas) ? 'no-cache' : 'public, max-age=86400'); },
 }));
 
 
@@ -788,7 +808,7 @@ app.post('/api/files/cdn', requireUser, (req, res, next) => cdnUpload.single('fi
   } catch (error) { return json(res, { error: `Upload CDN gagal: ${error.message}` }, 502); }
   finally { fs.rmSync(file.path, { force: true }); }
 });
-app.get('/api/files/:id/download', requireUser, async (req, res) => { const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return json(res, { error: 'File tidak ditemukan.' }, 404); try { return await sendRemoteFile(res, file, provider); } catch (error) { return json(res, { error: error.message }, 502); } });
+app.get('/api/files/:id/download', requireUser, async (req, res) => { const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return json(res, { error: 'File tidak ditemukan.' }, 404); try { return await sendRemoteFile(res, file, provider, 'inline', req.headers.range); } catch (error) { return json(res, { error: error.message }, 502); } });
 app.patch('/api/files/:id', requireUser, (req, res) => {
   const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
   if (!file) return json(res, { error: 'File tidak ditemukan.' }, 404);
@@ -879,10 +899,10 @@ app.get('/s/:token/download', async (req, res) => {
   // File disimpan di provider remote (Telegram/Mega/Google Drive), bukan di folder storage lokal.
   // Route ini sebelumnya memakai res.download(path.join(storageDir, remote_file_id)) sehingga
   // selalu gagal ENOENT. Sekarang dialirkan lewat sendRemoteFile agar provider + dekripsi ikut diproses.
-  try { return await sendRemoteFile(res, share, provider, 'attachment'); }
+  try { return await sendRemoteFile(res, share, provider, 'attachment', req.headers.range); }
   catch { if (res.headersSent) return res.end(); return res.status(502).end(); }
 });
-app.get('/cdn/:slug', async (req, res) => { const file = db.prepare("SELECT * FROM files WHERE cdn_slug = ? AND cdn_enabled = 1 AND encrypted = 0 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.params.slug, now()); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return res.status(404).end(); res.setHeader('Cache-Control', 'public, max-age=86400, immutable'); try { return await sendRemoteFile(res, file, provider); } catch { if (res.headersSent) return res.end(); return res.status(502).end(); } });
+app.get('/cdn/:slug', async (req, res) => { const file = db.prepare("SELECT * FROM files WHERE cdn_slug = ? AND cdn_enabled = 1 AND encrypted = 0 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.params.slug, now()); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return res.status(404).end(); res.setHeader('Cache-Control', 'public, max-age=86400, immutable'); try { return await sendRemoteFile(res, file, provider, 'inline', req.headers.range); } catch { if (res.headersSent) return res.end(); return res.status(502).end(); } });
 
 app.get('/api/admin/overview', requireUser, ownerOnly, (_req, res) => {
   const providers = db.prepare("SELECT * FROM providers WHERE kind != 'local' ORDER BY name").all();

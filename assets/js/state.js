@@ -4,6 +4,9 @@ import { app, formatBytes } from './core.js';
 export let state = { user: null, folderId: null, dashboard: null };
 export function applyRoleVisibility() { const shell = app.querySelector('.app-shell'); if (!shell) return; const owner = state.user?.role === 'owner'; shell.classList.toggle('member-view', !owner); if (owner) return; app.querySelectorAll('.file-card:not(.folder)').forEach((card, index) => { const file = state.dashboard?.files?.[index]; const meta = card.querySelector('.file-meta'); if (file && meta) meta.textContent = formatBytes(file.size); }); }
 export const isCdnMime = (mimeType) => /^(image|video)\//.test(String(mimeType || ''));
+// Ikon kartu mengikuti jenis berkas. Tanpa peta ini foto/video/PDF/audio memakai ikon 'file' yang
+// sama, dan nama yang tidak ada di ikon.js hanya menghasilkan SVG kosong tanpa error di browser.
+export const ikonMime = (mimeType = '') => /^image\//.test(mimeType) ? 'image' : /^video\//.test(mimeType) ? 'video' : /^audio\//.test(mimeType) ? 'music' : mimeType === 'application/pdf' ? 'file-text' : 'file';
 export const formatDateTime = (value) => value ? new Date(value).toLocaleString('id-ID', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '-';
 export function folderAndDescendants(folderId, folders) {
   const children = new Map();

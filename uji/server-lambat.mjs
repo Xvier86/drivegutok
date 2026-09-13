@@ -1,17 +1,21 @@
-// Uji regresi dua keluhan nyata di VPS (tanpa menyentuh data asli):
+// Uji regresi tiga keluhan nyata di VPS (tanpa menyentuh data asli):
 //   1. "Owner control loading lama"  -> GET /api/admin/overview dulu menunggu kuota provider
 //      (token Google / login Mega) sampai PROVIDER_TIMEOUT_MS.
 //   2. "Sampah tidak bisa dibuka"     -> GET /api/trash dulu menunggu pembersihan otomatis yang
 //      menghapus file ke provider tanpa batas waktu, jadi request menggantung selamanya.
+//   3. "audio/video tidak terbaca"    -> server mengabaikan header Range: pemutar hanya dapat
+//      respons 200 penuh, Safari menolak memutar media tanpa 206, dan menggeser posisi putar gagal.
 // Jalankan dari mana pun: node uji/server-lambat.mjs
 //
 // Cara kerja: server.js disalin ke folder sementara (node_modules di-symlink), provider Google
 // palsu diarahkan ke server TCP "blackhole" yang menerima koneksi tapi tidak pernah menjawab.
 // Dengan begitu jalur jaringan provider pasti menggantung, dan kedua endpoint harus tetap
-// menjawab cepat dari data yang sudah ada.
+// menjawab cepat dari data yang sudah ada. Provider Telegram palsu di bawah melayani getFile dan
+// mengirim berkas dengan dukungan Range, supaya penerusan 206 ikut diuji.
 import Database from 'better-sqlite3';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,6 +38,20 @@ fs.symlinkSync(path.join(root, 'node_modules'), path.join(kerja, 'node_modules')
 const blackhole = net.createServer(() => {});
 await new Promise((resolve) => blackhole.listen(0, '127.0.0.1', resolve));
 const portBlackhole = blackhole.address().port;
+// Telegram palsu: melayani getFile + berkas dengan dukungan Range. Isi berkas ASCII supaya potongan
+// byte bisa dibandingkan langsung. server.js membaca TELEGRAM_API_BASE, jadi tidak perlu tambalan.
+const isiMedia = Buffer.from('ABCDEFGHIJKLMNOP');
+const telegramPalsu = http.createServer((req, res) => {
+  if (req.url.includes('/getFile')) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, result: { file_path: 'docs/uji.bin' } }));
+  const rentang = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
+  if (!rentang) return res.writeHead(200, { 'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-length': String(isiMedia.length) }).end(isiMedia);
+  const mulai = Number(rentang[1]);
+  const akhir = rentang[2] ? Number(rentang[2]) : isiMedia.length - 1;
+  const potongan = isiMedia.subarray(mulai, akhir + 1);
+  return res.writeHead(206, { 'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-range': `bytes ${mulai}-${akhir}/${isiMedia.length}`, 'content-length': String(potongan.length) }).end(potongan);
+});
+await new Promise((resolve) => telegramPalsu.listen(0, '127.0.0.1', resolve));
+const portTelegram = telegramPalsu.address().port;
 const portApp = 3400 + Math.floor(Math.random() * 200);
 
 // Kunci RSA asli supaya getGoogleAccessToken() benar-benar sampai ke permintaan jaringan
@@ -47,7 +65,7 @@ const serviceAccountJson = JSON.stringify({
 
 const anak = spawn('node', ['server.js'], {
   cwd: kerja,
-  env: { ...process.env, PORT: String(portApp), NODE_ENV: 'test', STORAGE_CONFIG_KEY: 'kunci-uji', TRASH_RETENTION_DAYS: '30' },
+  env: { ...process.env, PORT: String(portApp), NODE_ENV: 'test', STORAGE_CONFIG_KEY: 'kunci-uji', TRASH_RETENTION_DAYS: '30', TELEGRAM_API_BASE: `http://127.0.0.1:${portTelegram}` },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let logAnak = '';
@@ -60,6 +78,7 @@ const bersihkan = () => {
   sudahKeluar = true;
   anak.kill('SIGKILL');
   blackhole.close();
+  telegramPalsu.close();
   fs.rmSync(kerja, { recursive: true, force: true });
 };
 // Batas uji bisa diperpendek saat sengaja menjalankan kode lama (UJI_TIMEOUT_MS=12000).
@@ -100,14 +119,29 @@ const buatProvider = await api('/api/admin/providers', {
 const providerId = (await buatProvider.json()).id;
 cek('provider uji dibuat', buatProvider.status === 201 && Boolean(providerId), `status=${buatProvider.status}`);
 
+// Provider Telegram palsu: satu-satunya provider yang menyimpan berkas di luar (dan yang dipakai
+// untuk menguji penerusan Range).
+const buatTelegram = await api('/api/admin/providers', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', cookie },
+  body: JSON.stringify({ name: 'Telegram uji', kind: 'telegram', capacityBytes: 1024 * 1024, config: { botToken: 'uji', chatId: '123' } }),
+});
+const telegramId = (await buatTelegram.json()).id;
+cek('provider telegram uji dibuat', buatTelegram.status === 201 && Boolean(telegramId), `status=${buatTelegram.status}`);
+
 const db = new Database(path.join(kerja, 'data', 'mydrive.sqlite'));
 db.prepare('UPDATE providers SET enabled = 1 WHERE id = ?').run(providerId);
+db.prepare('UPDATE providers SET enabled = 1 WHERE id = ?').run(telegramId);
 // File yang sudah lewat masa simpan (40 hari) dan providernya menggantung: inilah yang dulu
 // membuat GET /api/trash tidak pernah selesai.
 const lama = new Date(Date.now() - 40 * 86400000).toISOString();
 db.prepare(`INSERT INTO files (id, owner_id, folder_id, name, mime_type, size, provider, remote_file_id, uploaded_by, uploaded_at, deleted_at, cdn_slug, cdn_enabled, encrypted, retention_type, retention_value, expires_at)
   VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, 'forever', NULL, NULL)`)
   .run('file-lama', ownerId, 'lama.txt', 'text/plain', 123, providerId, 'gdrive:abc123', ownerId, lama, lama);
+// Berkas di Telegram palsu: inilah yang diuji lewat header Range.
+db.prepare(`INSERT INTO files (id, owner_id, folder_id, name, mime_type, size, provider, remote_file_id, uploaded_by, uploaded_at, deleted_at, cdn_slug, cdn_enabled, encrypted, retention_type, retention_value, expires_at)
+  VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, 0, 'forever', NULL, NULL)`)
+  .run('file-media', ownerId, 'video-uji.mp4', 'video/mp4', isiMedia.length, telegramId, 'telegram:123:45:FILEID', ownerId, new Date().toISOString());
 db.close();
 
 const ukur = async (jalur) => {
@@ -125,6 +159,15 @@ try {
   const provider = overview.data?.providers?.find((item) => item.id === providerId);
   cek('GET /api/admin/overview menjawab cepat walau provider menggantung', overview.status === 200 && overview.ms < 2000, `status=${overview.status} ${overview.ms}ms`);
   cek('GET /api/admin/overview tetap memuat provider + user + log', Boolean(provider) && overview.data?.users?.length === 1 && Array.isArray(overview.data?.logs), `capacitySource=${provider?.capacitySource}`);
+
+  // Penerusan Range: tanpa ini pemutar audio/video hanya dapat respons penuh (Safari menolaknya).
+  const unduh = await api('/api/files/file-media/download', { headers: { cookie } });
+  cek('download tanpa Range: 200 + isi penuh', unduh.status === 200 && (await unduh.text()) === isiMedia.toString('utf8'), `status=${unduh.status}`);
+  const rentang = await api('/api/files/file-media/download', { headers: { cookie, range: 'bytes=4-7' } });
+  const potongan = await rentang.text();
+  cek('permintaan Range dijawab 206 + Content-Range', rentang.status === 206 && rentang.headers.get('content-range') === `bytes 4-7/${isiMedia.length}`, `status=${rentang.status} content-range=${rentang.headers.get('content-range')}`);
+  cek('Accept-Ranges diteruskan dari provider', rentang.headers.get('accept-ranges') === 'bytes', `accept-ranges=${rentang.headers.get('accept-ranges')}`);
+  cek('isi potongan sesuai rentang', potongan === 'EFGH', `isi=${potongan}`);
 } catch (error) {
   cek('permintaan selesai tanpa error', false, error.message);
 }
