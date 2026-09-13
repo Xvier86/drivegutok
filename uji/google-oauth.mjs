@@ -70,6 +70,9 @@ const googlePalsu = http.createServer((req, res) => {
 });
 await new Promise((resolve) => googlePalsu.listen(0, '127.0.0.1', resolve));
 const alamatGoogle = `http://127.0.0.1:${googlePalsu.address().port}`;
+// Situs di balik reverse proxy: permintaan sampai ke Node sebagai http://, jadi alamat publik harus
+// datang dari PUBLIC_BASE_URL. Diisi di env server supaya cabang itu ikut teruji.
+const ALAMAT_PUBLIK = 'https://drive.contoh.invalid';
 const portApp = 4400 + Math.floor(Math.random() * 200);
 
 // Database lama: persis keadaan versi sebelum perubahan ini — tiga baris provider bawaan sudah ada,
@@ -96,7 +99,7 @@ dbLama.close();
 
 const anak = spawn('node', ['server.js'], {
   cwd: kerja,
-  env: { ...process.env, PORT: String(portApp), NODE_ENV: 'test', STORAGE_CONFIG_KEY: 'kunci-uji', GOOGLE_API_BASE: alamatGoogle, GOOGLE_AUTH_BASE: alamatGoogle },
+  env: { ...process.env, PORT: String(portApp), NODE_ENV: 'test', STORAGE_CONFIG_KEY: 'kunci-uji', GOOGLE_API_BASE: alamatGoogle, GOOGLE_AUTH_BASE: alamatGoogle, PUBLIC_BASE_URL: ALAMAT_PUBLIK },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let logAnak = '';
@@ -169,10 +172,10 @@ try {
   const login = await api(`/api/admin/providers/${providerId}/google/login`, { redirect: 'manual', headers: { cookie } });
   const urlIzin = new URL(login.headers.get('location') || 'http://kosong.invalid');
   const state = urlIzin.searchParams.get('state') || '';
-  const redirectUri = `${dasar}/api/admin/providers/${providerId}/google/callback`;
+  const redirectUri = `${ALAMAT_PUBLIK}/api/admin/providers/${providerId}/google/callback`;
   cek('login Google mengalihkan ke halaman persetujuan', login.status === 302 && urlIzin.origin === alamatGoogle && urlIzin.pathname === '/o/oauth2/v2/auth', `status=${login.status} ${urlIzin.href}`);
   cek('permintaan izin lengkap (client_id, drive, offline, consent, state)', urlIzin.searchParams.get('client_id') === 'CID-uji' && urlIzin.searchParams.get('scope') === 'https://www.googleapis.com/auth/drive' && urlIzin.searchParams.get('access_type') === 'offline' && urlIzin.searchParams.get('prompt') === 'consent' && state.length >= 16, urlIzin.search);
-  cek('redirect URI menunjuk callback aplikasi', urlIzin.searchParams.get('redirect_uri') === redirectUri, urlIzin.searchParams.get('redirect_uri') || '(kosong)');
+  cek('redirect URI memakai PUBLIC_BASE_URL (bukan alamat permintaan yang masuk)', urlIzin.searchParams.get('redirect_uri') === redirectUri, urlIzin.searchParams.get('redirect_uri') || '(kosong)');
 
   const stateSalah = await api(`/api/admin/providers/${providerId}/google/callback?code=CODE-uji&state=state-palsu`, { redirect: 'manual' });
   cek('callback dengan state palsu ditolak', stateSalah.status === 400, `status=${stateSalah.status}`);

@@ -1,7 +1,8 @@
 // Konfigurasi PM2 untuk Gutok Drive.
 // Dipakai: pm2 start ecosystem.config.cjs / pm2 restart ecosystem.config.cjs --update-env
 // Script deploy (setup.sh, update-code.sh, deploy-bersih.sh) menyuntik nilai STORAGE_CONFIG_KEY
-// dari .env ke baris di bawah, jadi jangan ganti placeholder-nya dengan format lain.
+// dan PUBLIC_BASE_URL dari .env ke baris di bawah, jadi jangan ganti placeholder-nya dengan format
+// lain.
 module.exports = {
   apps: [{
     name: 'gutok-drive',
@@ -32,6 +33,12 @@ module.exports = {
 
       // Masa simpan item di Sampah (hari) sebelum dibersihkan otomatis. Opsional, default 30.
       TRASH_RETENTION_DAYS: 30,
+
+      // Alamat publik situs ini tanpa garis miring di akhir, mis. https://drive.contoh.com. Diisi
+      // dari PUBLIC_BASE_URL di .env oleh update-code.sh, sama seperti STORAGE_CONFIG_KEY. Dipakai
+      // menyusun redirect URI login akun Google: di balik reverse proxy permintaan sampai ke Node
+      // sebagai http://, dan Google menolak redirect URI yang tidak sama dengan yang didaftarkan.
+      PUBLIC_BASE_URL: '',
     },
   }],
 };

@@ -101,7 +101,7 @@ app_persiapan() {
   MD5_DB=$(md5sum "$APP/data/mydrive.sqlite" | cut -d' ' -f1)
   MD5_WAL=$(md5sum "$APP/data/mydrive.sqlite-wal" | cut -d' ' -f1)
   MD5_SHM=$(md5sum "$APP/data/mydrive.sqlite-shm" | cut -d' ' -f1)
-  printf 'STORAGE_CONFIG_KEY=SECRET-ASLI-UJI-1234567890\n' > "$APP/.env"
+  printf 'STORAGE_CONFIG_KEY=SECRET-ASLI-UJI-1234567890\nPUBLIC_BASE_URL=https://drive.contoh.invalid\n' > "$APP/.env"
   printf '#!/usr/bin/env bash\necho versi-lama-sisa-setup\n' > "$APP/update-code.sh"
   mkdir -p "$APP/storage" "$APP/data/tmp"
   git -C "$APP" show "origin/$BRANCH:ecosystem.config.cjs" > "$APP/ecosystem.config.cjs"
@@ -129,6 +129,7 @@ kasus_redeploy() {
   cek_sama "commit app == tip" "$(git -C "$APP" rev-parse --short HEAD)" "$(git -C "$SUMBER" rev-parse --short HEAD)"
   cek_sama "md5 DB produksi utuh" "$(md5_berkas "$APP/data/mydrive.sqlite")" "$MD5_DB"
   cek_ada "log: redeploy selesai" "Redeploy selesai" "$KERJA/out.log"
+  cek_sama "PUBLIC_BASE_URL .env ikut disuntik ke ecosystem.config.cjs" "$(sed -n "s/^ *PUBLIC_BASE_URL: *'\(.*\)'.*/\1/p" "$APP/ecosystem.config.cjs" | head -1)" "https://drive.contoh.invalid"
 }
 
 kasus_perbaiki() {

@@ -5,8 +5,9 @@ set -euo pipefail
 # Dipakai oleh deploy.sh (/var/www/gutok-drive) dan redeploy.sh (~/drivegutok).
 #
 # "git pull" saja tidak cukup karena tiga hal:
-#  1. setup.sh menyuntik STORAGE_CONFIG_KEY asli ke ecosystem.config.cjs yang dilacak Git,
-#     jadi pull ditolak: "Your local changes ... would be overwritten by merge".
+#  1. setup.sh menyuntik STORAGE_CONFIG_KEY asli (dan PUBLIC_BASE_URL, kalau diisi di .env) ke
+#     ecosystem.config.cjs yang dilacak Git, jadi pull ditolak: "Your local changes ... would be
+#     overwritten by merge".
 #  2. Rilis lama ikut melacak file runtime SQLite (data/mydrive.sqlite*) yang isinya berubah
 #     setiap aplikasi berjalan, jadi merge selalu ditolak. Rilis baru menghapus file itu dari
 #     Git, sehingga isinya harus disisihkan dulu supaya database produksi tidak ikut terhapus.
@@ -31,11 +32,23 @@ if [ -z "$SECRET" ] && [ -f ecosystem.config.cjs ]; then
   SECRET=$(sed -n "s/^ *STORAGE_CONFIG_KEY: *'\(.*\)'.*/\1/p" ecosystem.config.cjs | head -1 || true)
 fi
 
+# PUBLIC_BASE_URL bukan rahasia, tapi nasibnya sama: nilainya ada di .env sedangkan file yang dibaca
+# PM2 (ecosystem.config.cjs) dilacak Git, jadi setiap pull mengembalikannya ke placeholder. Tanpa
+# suntikan ini redirect URI login Google kembali tersusun dari permintaan yang masuk dan berbunyi
+# http:// padahal situs publiknya https:// — Google menolak URI yang tidak sama dengan yang
+# didaftarkan.
+PUBLIK=""
+if [ -f .env ]; then
+  PUBLIK=$(grep '^PUBLIC_BASE_URL=' .env | head -1 | cut -d '=' -f2- || true)
+fi
+
 suntik_secret() {
-  if [ -z "$SECRET" ]; then
-    return 0
+  if [ -n "$SECRET" ]; then
+    sed -i "s#STORAGE_CONFIG_KEY: '.*'#STORAGE_CONFIG_KEY: '${SECRET}'#" ecosystem.config.cjs
   fi
-  sed -i "s#STORAGE_CONFIG_KEY: '.*'#STORAGE_CONFIG_KEY: '${SECRET}'#" ecosystem.config.cjs
+  if [ -n "$PUBLIK" ] && [ -f ecosystem.config.cjs ]; then
+    sed -i "s#PUBLIC_BASE_URL: '.*'#PUBLIC_BASE_URL: '${PUBLIK}'#" ecosystem.config.cjs
+  fi
 }
 
 if ! git diff --quiet -- ecosystem.config.cjs; then
@@ -133,7 +146,7 @@ done < <(git diff --name-only --diff-filter=A "HEAD..origin/$BRANCH" 2>/dev/null
 
 if ! git merge --ff-only "origin/$BRANCH"; then
   echo "!! git merge --ff-only gagal (biasanya karena ada commit lokal di VPS)."
-  echo "!! Kode tidak diubah. Secret disuntik ulang supaya ecosystem.config.cjs tetap benar."
+  echo "!! Kode tidak diubah. Secret dan PUBLIC_BASE_URL disuntik ulang supaya ecosystem.config.cjs tetap benar."
   suntik_secret
   exit 1
 fi
