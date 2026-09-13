@@ -1,5 +1,6 @@
 // Uji gaya: setiap kelas yang dipakai JS wajib punya aturan di assets/styles/*.css,
-// dan tidak boleh ada inline style statis (hanya lebar progress yang dinamis).
+// tidak boleh ada inline style statis (hanya lebar progress yang dinamis), setiap nama ikon harus
+// ada di assets/js/ikon.js, dan assets/index.html tidak boleh memuat skrip pihak ketiga.
 // Bug lama: tombol Owner control memakai var(--yellow) yang tidak pernah ada di CSS.
 import fs from 'node:fs';
 
@@ -52,6 +53,22 @@ for (const berkas of [...berkasJs, ...berkasCss]) {
 const tokenHilang = [...dipakaiToken].filter((nama) => !token.has(nama)).sort();
 cek('semua var(--token) terdefinisi', tokenHilang.length === 0);
 if (tokenHilang.length) console.error(`        token hilang: ${tokenHilang.join(', ')}`);
+
+// Ikon: nama yang dipanggil icon('...') harus ada di peta ikon.js, karena nama yang salah hanya
+// menghasilkan SVG kosong (tombol tanpa ikon) tanpa error apa pun di browser.
+const petaIkon = new Set([...baca('assets/js/ikon.js').matchAll(/^\s+'([a-z0-9-]+)':/gm)].map((m) => m[1]));
+const dipakaiIkon = new Set();
+for (const berkas of [...berkasJs, ...berkasCss]) {
+  for (const m of baca(berkas).matchAll(/icon\(['"]([a-z0-9-]+)['"]/g)) dipakaiIkon.add(m[1]);
+}
+const ikonHilang = [...dipakaiIkon].filter((nama) => !petaIkon.has(nama)).sort();
+cek(`semua nama ikon terdaftar di ikon.js (${dipakaiIkon.size} ikon dipakai)`, ikonHilang.length === 0);
+if (ikonHilang.length) console.error(`        ikon hilang: ${ikonHilang.join(', ')}`);
+
+const halaman = baca('assets/index.html');
+const skripLuar = [...halaman.matchAll(/<script[^>]+src="(https?:[^"]+)"/g)].map((m) => m[1]);
+cek('index.html tidak memuat skrip pihak ketiga', skripLuar.length === 0);
+if (skripLuar.length) console.error(`        skrip luar: ${skripLuar.join(', ')}`);
 
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

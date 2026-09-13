@@ -16,7 +16,7 @@ drivegutok/
 │  ├─ index.html           kerangka halaman: hanya #app dan #toast
 │  ├─ logo.jpg
 │  ├─ app.js               titik masuk: daftar rute, listener global, start()
-│  ├─ js/                  core.js (api/toast/helper), router.js (ke()), state.js
+│  ├─ js/                  core.js (api/toast/helper), router.js (ke()), state.js, ikon.js (SVG inline)
 │  │  └─ views/            login.js, files.js, admin.js, trash.js
 │  └─ styles/              tokens.css, base.css, components.css, views.css
 ├─ uji/                    semua uji otomatis
@@ -31,9 +31,13 @@ Script `*.sh` sengaja tetap di akar repo karena alur VPS memanggilnya dengan nam
 ```bash
 npm run check                  # sintaks semua berkas + uji cepat
 npm run uji                    # lingkup modul, batas waktu upload, render tiap layar, gaya CSS
-npm run uji:berat              # cleanup.js dan server lambat (menyalin server.js ke folder sementara)
+npm run uji:berat              # cleanup.js, server lambat, dan pemakaian RAM saat upload besar
 bash uji/skrip-deploy.sh .     # latihan deploy di VPS palsu (pm2/npm/curl diganti stub)
 ```
+
+Uji di `uji/` yang berjalan ke proses server sungguhan menyalin `server.js` ke folder sementara
+(provider diarahkan ke server tiruan lokal lewat `TELEGRAM_API_BASE` / `GOOGLE_API_BASE`), jadi
+tidak ada file uji yang dikirim ke provider asli.
 
 Semua uji di `uji/` boleh dijalankan dari folder mana pun dan tidak menyentuh `data/` maupun `storage/` produksi.
 
@@ -193,6 +197,11 @@ server {
 
     client_max_body_size 5G;
 
+    # Aset statis (CSS/JS) dikompres Nginx, bukan Node — hemat CPU VPS.
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
@@ -202,13 +211,41 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 3600;
         proxy_send_timeout 3600;
+
+        # Tanpa ini Nginx menulis seluruh badan request upload ke disk dulu (dua kali tulis untuk
+        # file besar) lalu menahan respons besar di buffer. Keduanya membebani VPS 1 GB.
+        proxy_request_buffering off;
+        proxy_buffering off;
     }
 }
 ```
 
 Aktifkan HTTPS menggunakan Certbot atau SSL aaPanel. Saat `NODE_ENV=production`, cookie session otomatis memakai flag `Secure`.
 
-## 7. Setup Provider melalui Dashboard
+Kalau trafik lewat Cloudflare (proxy oranye), batas tubuh request di paket gratis adalah 100 MB — Cloudflare akan menjawab 413 sebelum Nginx melihatnya. Untuk file lebih besar, arahkan subdomain upload langsung ke IP VPS (DNS only) dan pastikan `client_max_body_size` di Nginx sesuai.
+
+## 7. Batas Memori VPS 1 GB
+
+Backend ini dijaga tetap ringan tanpa pindah bahasa. Yang diukur dan diperbaiki:
+
+- **Upload mengalir, tidak dimuat ke RAM.** Telegram dulu memakai `new Blob([fs.readFileSync(...)])` (1x ukuran file) dan Google Drive memakai `readFileSync` + `Buffer.concat` (2x ukuran file), jadi mengunggah 300 MB bisa memakai 300–600 MB RAM dan memicu OOM killer. Sekarang keduanya memakai `kirimMultipart()` — `node:http`/`node:https` dengan `Content-Length` pasti, membaca file potongan demi potongan dengan backpressure. `uji/ram.mjs` mengukurnya: upload 240 MB tidak menaikkan puncak RSS secara berarti.
+- **`fetch()` Node bukan alat yang tepat untuk badan request besar.** undici menahan seluruh badan di memori sebelum mengirim: terukur +132 MB untuk file 96 MB, sementara pipa `node:http` hanya +21 MB. Karena itu upload provider tidak memakai `fetch`.
+- **PM2 dibatasi.** `ecosystem.config.cjs` memakai `node_args: '--max-old-space-size=384'` dan `max_memory_restart: '500M'`, jadi Node tidak pernah memakan jatah memori seluruh VPS.
+- **SQLite diringankan.** `synchronous = NORMAL`, `busy_timeout = 5000`, `cache_size = -8000` (8 MB): fsync tidak dilakukan tiap transaksi dan cache halaman tetap terbatas.
+- **Browser tidak lagi memuat lucide dari CDN.** Ikon disalin ke `assets/js/ikon.js` (22 ikon, ±4 KB); sebelumnya satu skrip `unpkg.com/lucide@latest` ±600 KB plus pemindaian DOM di setiap perubahan render.
+- **Nginx tidak menyalin ulang badan request ke disk** (`proxy_request_buffering off` di bagian 6).
+
+Kalau RAM tetap mepet, tambahkan swap 1 GB sebagai pelega:
+
+```bash
+sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+Semua beban berat (TLS, kompresi, cache, hooking file besar) sengaja di luar Node: Cloudflare di depan, Nginx di tengah, browser di ujung. Bagian yang harus pintar (metadata, otentikasi, enkripsi config) tetap di Node dan jumlahnya sedikit.
+
+## 8. Setup Provider melalui Dashboard
 
 Login sebagai Owner, buka `Owner control`, lalu konfigurasi provider.
 
@@ -240,7 +277,7 @@ Telegram tidak menyediakan angka total quota channel. Dashboard menghitung pengg
 3. Aktifkan provider.
 4. Uji upload file kecil.
 
-## 8. Fitur Upload
+## 9. Fitur Upload
 
 - Owner dapat memilih provider upload.
 - User biasa memakai provider aktif secara otomatis.
@@ -258,7 +295,7 @@ Telegram tidak menyediakan angka total quota channel. Dashboard menghitung pengg
 - Tombol **Pindahkan** di setiap kartu file/folder memindahkannya ke folder lain; pilihan `MyDrive (root)` mengeluarkan item dari semua folder. Folder tidak bisa dipindahkan ke dirinya sendiri atau ke turunannya.
 - Tombol **CDN** hanya muncul untuk gambar/video yang tidak dienkripsi dan dipakai untuk menyalakan atau mematikan link `/cdn/<slug>`. File terenkripsi tidak bisa dipakai sebagai CDN karena link CDN mengirim byte apa adanya.
 
-## 9. Data dan Backup
+## 10. Data dan Backup
 
 Data penting:
 
@@ -277,7 +314,7 @@ pm2 start gutok-drive
 
 Simpan backup di server berbeda dan jangan menyertakan credential mentah di log atau repository.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 ### `Failed to fetch`
 
@@ -314,7 +351,7 @@ pm2 status
 
 Hentikan proses lama melalui PM2, atau ubah `PORT` di `ecosystem.config.cjs` dan reverse proxy secara bersamaan.
 
-## 11. Update dan Deploy Ulang
+## 12. Update dan Deploy Ulang
 
 Aplikasi hanya punya satu target deployment: VPS (`server.js` + SQLite + PM2). Target Cloudflare Workers/D1/KV sudah dihapus, jadi tidak ada `wrangler` maupun migrasi terpisah — skema database dibuat dan di-update otomatis oleh `server.js` setiap aplikasi start.
 
