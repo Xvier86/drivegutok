@@ -225,8 +225,13 @@ Langkah yang tersisa (bukan Nginx):
    Cloudflare (paket gratis 100 MB) — pakai domain DNS-only untuk upload besar.
 2. Browser bisa masih memegang CSS/JS lama: Ctrl+Shift+R. Cloudflare -> Caching -> Configuration
    -> Browser Cache TTL = "Respect Existing Headers", lalu Purge Everything.
-3. Owner control mati bukan soal Nginx — perbaikan bindDashboard() ada di rilis aplikasi terbaru,
-   pastikan `bash deploy.sh` sudah dijalankan setelah rilis itu masuk.
+3. Owner control terbuka sebentar lalu kembali ke "Semua file" hampir selalu cache browser, bukan Nginx:
+   Cloudflare memberi aset JS `cache-control: max-age=14400`, jadi JS lama bisa dipakai sampai 4 jam.
+   Perbaikannya `no-store` (dikirim server.js) + Ctrl+Shift+R satu kali, dan Caching -> Configuration
+   -> Browser Cache TTL = "Respect Existing Headers" + Purge Everything. Buktikan dengan
+   `curl -sI https://<domain>/js/views/admin.js | grep -i cache-control`. Kalau headernya sudah benar
+   tetapi gejalanya tetap, bandingkan `curl -s https://<domain>/js/views/admin.js | md5sum -` dengan
+   `md5sum assets/js/views/admin.js` di VPS — kalau sama, kodenya sudah benar dan tinggal cache browser.
 CATATAN
 
 exit "$GAGAL"

@@ -395,7 +395,21 @@ Ada dua sebab yang berbeda.
 
 ### Perubahan CSS/JS tidak terlihat setelah deploy
 
-Cloudflare menimpa `max-age` aset statis dengan Browser Cache TTL miliknya (terukur: `5 menit` jadi `4 jam`), jadi browser bisa memakai CSS/JS lama berjam-jam setelah deploy — gejalanya menyesatkan, misalnya "menu Owner control mati" atau "bilah storage kosong" walau berkas di server sudah benar. Karena itu `server.js` mengirim `no-cache` untuk `/app.js`, `/js/*.js`, `/styles/*.css`, dan `index.html` (browser memvalidasi ulang lewat ETag → 304), sedangkan gambar tetap boleh di-cache 1 hari. Kalau ragu, bandingkan isi yang benar-benar dikirim:
+Cloudflare menimpa Cache-Control aset statis dengan Browser Cache TTL miliknya (terukur: `no-cache` pun berakhir jadi `max-age=14400`), jadi browser bisa memakai CSS/JS lama sampai 4 jam setelah deploy — gejalanya menyesatkan, misalnya "Owner control terbuka sebentar lalu kembali ke Semua file", "menu Owner control mati", atau "bilah storage kosong" walau berkas di server sudah benar. Karena itu `server.js` mengirim `no-store` untuk `/app.js`, `/js/*.js`, `/styles/*.css`, dan `index.html` — satu-satunya direktif yang menurut tabel direktif Cloudflare membuat browser tidak menyimpan salinan sama sekali, sedangkan `no-cache` hanya menyuruh memvalidasi ulang lewat ETag (304) dan tetap ditimpa oleh Browser Cache TTL. Gambar tetap boleh di-cache 1 hari.
+
+Sesudah deploy, pastikan header yang diterima browser sudah benar:
+
+```bash
+curl -sI https://gutokdrive.world/js/views/admin.js | grep -i cache-control   # harus `no-store`
+```
+
+Kalau masih `max-age=14400`, yang memaksa adalah Cache Rule Cloudflare: Caching -> Configuration -> Browser Cache TTL = "Respect Existing Headers", lalu Purge Everything. Untuk membandingkan berkas yang dikirim server dengan yang ada di repo:
+
+```bash
+curl -s https://gutokdrive.world/js/views/admin.js | md5sum - ; md5sum assets/js/views/admin.js   # harus sama
+```
+
+Kalau `md5sum`-nya sama tetapi gejalanya bertahan, penyebabnya cache browser — Ctrl+Shift+R (atau mode incognito) satu kali, lalu muat ulang normal.
 
 ```bash
 curl -s https://gutokdrive.world/styles/components.css | grep -c storage-bar   # 1 = versi baru

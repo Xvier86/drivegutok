@@ -1,6 +1,7 @@
 // Uji gaya: setiap kelas yang dipakai JS wajib punya aturan di assets/styles/*.css,
 // tidak boleh ada inline style statis (hanya lebar progress yang dinamis), setiap nama ikon harus
-// ada di assets/js/ikon.js, dan assets/index.html tidak boleh memuat skrip pihak ketiga.
+// ada di assets/js/ikon.js, assets/index.html tidak boleh memuat skrip pihak ketiga, dan aset
+// JS/CSS/HTML wajib dikirim `no-store` (Cloudflare menimpa `no-cache` jadi max-age 4 jam).
 // Bug lama: tombol Owner control memakai var(--yellow) yang tidak pernah ada di CSS.
 import fs from 'node:fs';
 
@@ -96,6 +97,15 @@ const halaman = baca('assets/index.html');
 const skripLuar = [...halaman.matchAll(/<script[^>]+src="(https?:[^"]+)"/g)].map((m) => m[1]);
 cek('index.html tidak memuat skrip pihak ketiga', skripLuar.length === 0);
 if (skripLuar.length) console.error(`        skrip luar: ${skripLuar.join(', ')}`);
+
+// Pengiriman aset ke browser. Terukur di produksi 13 Sep 2026 (curl ke /js/views/admin.js dengan
+// query pengusir cache, jawaban cf-cache-status=MISS dari origin): origin mengirim `no-cache`, tetapi
+// yang diterima browser `cache-control: max-age=14400` karena Cloudflare menimpa Cache-Control aset
+// statis dengan Browser Cache TTL miliknya. Akibatnya perbaikan owner control yang sudah ada di
+// server (md5 aset VPS = repo) tetap tidak terlihat sampai 4 jam; gejalanya "Owner control terbuka
+// sebentar lalu kembali ke Semua file". `no-store` adalah satu-satunya direktif yang menurut tabel
+// Cloudflare tidak disimpan browser sama sekali, jadi aset JS/CSS/HTML harus dikirim dengan itu.
+cek("server.js mengirim 'no-store' untuk aset JS/CSS/HTML", /Cache-Control',\s*\/\\\.\(js\|css\|html\)\$\/\.test\(berkas\)\s*\?\s*'no-store'/.test(baca('server.js')));
 
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

@@ -1,5 +1,6 @@
-// Uji ikatan: fungsi tampilan yang diimpor app.js WAJIB benar-benar dipanggil, dan setiap
-// `querySelector('#id')` di kode tampilan WAJIB punya elemen `id="id"` di suatu markup.
+// Uji ikatan: fungsi tampilan yang diimpor app.js WAJIB benar-benar dipanggil; `querySelector('#id')` di kode tampilan
+// WAJIB punya elemen `id="id"` di suatu markup; ikatan tombol dipasang SEKALI (dua pemanggilan bindDashboard() membuat
+// satu klik Owner control menjalankan dua permintaan); dan tombol "Upload CDN" hanya disisipkan di layar dashboard.
 //
 // Kenapa perlu: commit a2374c7 memecah app.js jadi modul, tetapi `bindDashboard()` tertinggal di
 // daftar impor saja — tidak pernah dipanggil. Akibatnya seluruh tombol dashboard mati TANPA
@@ -40,6 +41,20 @@ for (const berkas of berkasTampilan) {
   }
 }
 cek('selector #id kode tampilan dipindai', selector >= 20);
+
+// 3) Satu ikatan per tombol. renderDashboard() dulu memanggil bindDashboard() sendiri padahal app.js
+// sudah memanggilnya lewat peristiwa 'layar-siap' setelah setiap render, jadi #admin-view/#admin-card/
+// #trash-view punya dua listener: satu klik Owner control = dua kali GET /api/admin/overview
+// (dibuktikan di browser tiruan jsdom, 2 panggilan sebelum perbaikan, 1 sesudahnya).
+const sumberFiles = baca('assets/js/views/files.js');
+const badanRender = sumberFiles.slice(sumberFiles.indexOf('export async function renderDashboard'), sumberFiles.indexOf('// Ikatan tombol dipasang satu kali saja'));
+cek('renderDashboard tidak memasang ikatan tombol sendiri', badanRender.length > 0 && !/bindDashboard\(\)/.test(badanRender));
+
+// 4) bindCdnUpload() menyisipkan tombol ke `.action-row` pertama yang ditemukan, dan header Owner
+// control juga memakai kelas itu — tanpa penjaga #dropzone, tombol "Upload CDN (5 MB)" muncul di
+// halaman Owner control.
+const badanCdn = sumberFiles.slice(sumberFiles.indexOf('export function bindCdnUpload'), sumberFiles.indexOf('export function bindProviderPicker'));
+cek('bindCdnUpload hanya menyisipkan tombol kalau ada #dropzone', badanCdn.includes('#dropzone'));
 
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

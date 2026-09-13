@@ -499,14 +499,20 @@ app.use((req, res, next) => {
   if (/\.(env|sqlite|sqlite3|db|pem|key|log)$/i.test(req.path) || /(^|\/)(server\.js|package-lock\.json|ecosystem\.config\.cjs)(\/|$)/i.test(req.path)) return res.status(404).end();
   return next();
 });
-// Aset belum ber-hash: Cloudflare menimpa max-age aset statis dengan Browser Cache TTL miliknya
-// (terukur di produksi: 5 menit jadi 4 jam), jadi setelah deploy browser masih memakai CSS/JS lama
-// sampai berjam-jam. Gejalanya sulit dilacak: menu Owner control mati dan bilah Drive Storage kosong
-// padahal berkas di server sudah benar. Karena itu JS/CSS/HTML dikirim `no-cache` — browser selalu
-// memvalidasi ulang lewat ETag (304, murah) sehingga versi baru langsung terpakai.
+// Aset belum ber-hash: Cloudflare menimpa Cache-Control aset statis dengan Browser Cache TTL miliknya.
+// Terukur di produksi 13 Sep 2026 lewat `curl -sI 'https://gutokdrive.world/js/views/admin.js?bust=1'`
+// (jawaban MISS = dari origin, bukan dari cache tepi): origin mengirim `no-cache`, browser menerima
+// `cache-control: max-age=14400` — jadi `no-cache` TIDAK cukup, browser memakai JS lama sampai 4 jam
+// setelah deploy. Gejalanya menyesatkan: menu Owner control terlempar balik ke "Semua file" padahal
+// berkas di server sudah benar (`md5sum` aset di VPS = repo). Karena itu JS/CSS/HTML dikirim
+// `no-store`, satu-satunya direktif yang menurut tabel Cloudflare membuat browser tidak menyimpan
+// sama sekali (baris "no-store" -> CDN: will not cache, browser: will not cache). Gambar tetap boleh
+// di-cache 1 hari. Setelah deploy, pastikan dengan:
+//   curl -sI https://<domain>/js/views/admin.js | grep -i cache-control   # kalah masih `max-age=14400`,
+//   berarti masih ada Cache Rule yang memaksa Browser Cache TTL -> set "Respect Existing Headers".
 app.use(express.static(path.join(root, 'assets'), {
   maxAge: '5m',
-  setHeaders: (res, berkas) => { res.setHeader('Cache-Control', /\.(js|css|html)$/.test(berkas) ? 'no-cache' : 'public, max-age=86400'); },
+  setHeaders: (res, berkas) => { res.setHeader('Cache-Control', /\.(js|css|html)$/.test(berkas) ? 'no-store' : 'public, max-age=86400'); },
 }));
 
 
