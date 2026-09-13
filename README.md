@@ -286,7 +286,7 @@ Server membuat OAuth access token otomatis dari JSON service account. API key Go
 4. Masukkan bot token dan channel ID pada panel.
 5. Uji upload file kecil.
 
-Telegram tidak menyediakan angka total kuota channel, jadi kartu provider-nya menampilkan byte yang benar-benar **terkirim ke Telegram** — bukan "kuota tak dilaporkan" dan bukan galat. Angkanya dihitung dari baris database milik provider itu, sehingga ikut turun begitu berkas dihapus permanen.
+Telegram tidak menyediakan angka total kuota channel (Bot API tidak punya endpointnya), jadi kartu provider-nya memakai **kapasitas manual** yang diisi Owner pada kolom "Kapasitas" saat menambah provider, sedangkan angka pemakaian adalah byte yang benar-benar **terkirim ke Telegram** — dihitung dari baris database milik provider itu, sehingga ikut turun begitu berkas dihapus permanen. Isi kapasitas `0` kalau tidak ingin batas kuota ditampilkan.
 
 Menghapus permanen berkas (atau mengosongkan Sampah) memanggil `deleteMessage`, jadi pesannya benar-benar hilang dari channel — bukan sekadar disembunyikan dari dashboard. Telegram hanya mengizinkan bot menghapus pesan yang dikirim **kurang dari 48 jam**; untuk berkas yang lebih tua situs tetap menghapusnya dari dashboard sambil menampilkan peringatan bahwa pesannya perlu dihapus manual di channel.
 

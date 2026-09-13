@@ -14,9 +14,9 @@ globalThis.document = new Proxy(el, { get: (_t, kunci) => (kunci === 'querySelec
 process.on('unhandledRejection', () => {});
 
 const provider = { id: 'p1', name: 'Google Drive', kind: 'gdrive', enabled: 1, used_bytes: 1024, capacity_bytes: 2048, configured: true, missing: [] };
-// Provider Telegram: tidak ada endpoint kuota di Bot API, jadi satu-satunya angka yang benar adalah
-// byte yang terkirim — badge-nya harus berbeda dari "kuota tak dilaporkan" milik provider manual.
-const providerTelegram = { id: 'p2', name: 'Telegram Channel', kind: 'telegram', enabled: 1, used_bytes: 4096, capacity_bytes: 0, capacitySource: 'telegram', capacityError: null, configured: true, missing: [] };
+// Provider Telegram: Bot API tidak punya endpoint kuota, jadi yang dipakai adalah kapasitas manual
+// yang diisi Owner (1 MB) plus byte terkirim — bukan "kuota tak dilaporkan" milik provider manual.
+const providerTelegram = { id: 'p2', name: 'Telegram Channel', kind: 'telegram', enabled: 1, used_bytes: 4096, capacity_bytes: 1048576, capacitySource: 'telegram', capacityError: null, configured: true, missing: [] };
 const file = { id: 'f1', name: 'laporan.pdf', mime_type: 'application/pdf', size: 2048, provider: 'p1', cdn_enabled: 0, cdn_slug: null, encrypted: 0, uploaded_at: '2026-09-13T00:00:00Z', deleted_at: '2026-09-13T00:00:00Z' };
 // Satu berkas per jenis media: setiap cabang ikonMime() ikut dijalankan saat render, jadi nama ikon
 // yang hilang atau impor yang tertinggal muncul sebagai kegagalan render, bukan kartu tanpa ikon.
@@ -105,8 +105,8 @@ else { console.error(`  GAGAL  aksi Owner control masih campur gaya tombol (ghos
 // Telegram tidak melaporkan kuota: badge-nya menyebut byte yang terkirim, dan provider sehat tidak
 // boleh punya badge galat (dulu selalu merah "Kuota error" justru karena kuotanya tidak ada).
 const badgeGalat = (adminMarkup.match(/class="badge error"/g) || []).length;
-if (adminMarkup.includes('4 KB terkirim ke Telegram') && !adminMarkup.includes('kuota tak dilaporkan') && badgeGalat === 0) console.log('  ok  provider Telegram memakai badge "terkirim", tanpa galat kuota');
-else { console.error(`  GAGAL  badge provider Telegram salah (terkirim=${adminMarkup.includes('terkirim ke Telegram')} kuota-tak-dilaporkan=${adminMarkup.includes('kuota tak dilaporkan')} badge-error=${badgeGalat})`); gagal += 1; }
+if (adminMarkup.includes('4 KB terkirim ke Telegram') && adminMarkup.includes('dari 1.0 MB') && !adminMarkup.includes('kuota tak dilaporkan') && badgeGalat === 0) console.log('  ok  provider Telegram memakai kuota manual + byte terkirim, tanpa galat kuota');
+else { console.error(`  GAGAL  badge provider Telegram salah (terkirim=${adminMarkup.includes('terkirim ke Telegram')} kuota-manual=${adminMarkup.includes('dari 1.0 MB')} kuota-tak-dilaporkan=${adminMarkup.includes('kuota tak dilaporkan')} badge-error=${badgeGalat})`); gagal += 1; }
 // Timeline: 3 entri / 2 hari → 2 header tanggal dan 3 baris jam, dan baris jam tidak mengulang tahun.
 const kepalaHari = (adminMarkup.match(/class="tl-hari"/g) || []).length;
 const barisJam = (adminMarkup.match(/class="tl-jam"/g) || []).length;

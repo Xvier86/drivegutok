@@ -17,3 +17,6 @@ service-account*.json
 
 # Arsip backup lokal
 gutok-drive-backup-*.tar.gz
+
+# Tangkapan layar lokal (GNOME menamai berkasnya "Cuplikan layar ...")
+Cuplikan layar*.png

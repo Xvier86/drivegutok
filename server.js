@@ -188,10 +188,10 @@ async function readProviderCapacity(provider) {
   try { config = decryptConfig(provider.config_json); } catch { return { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'error', capacityError: 'Konfigurasi provider tidak dapat dibaca.' }; }
   if (provider.kind === 'telegram') {
     const usage = db.prepare('SELECT COALESCE(SUM(size), 0) AS bytes FROM files WHERE provider = ? AND deleted_at IS NULL').get(provider.id).bytes;
-    // Telegram tidak menyediakan angka kuota channel (Bot API tidak punya endpointnya). Yang
-    // dilaporkan hanya byte yang benar-benar terkirim ke Telegram: dihitung dari baris database
-    // milik provider ini, jadi angkanya ikut turun saat berkas dihapus permanen. Bukan galat kuota.
-    return { usedBytes: usage, capacityBytes: 0, capacitySource: 'telegram' };
+    // Telegram tidak menyediakan angka kuota channel (Bot API tidak punya endpointnya), jadi kuota
+    // yang dipakai adalah angka manual yang diisi Owner saat menambah provider; yang dilaporkan
+    // terpakai hanya byte yang benar-benar terkirim (dihitung dari baris database provider ini, ikut turun saat berkas dihapus permanen). Bukan galat kuota.
+    return { usedBytes: usage, capacityBytes: provider.capacity_bytes, capacitySource: 'telegram' };
   }
   if (provider.kind === 'gdrive') {
     const accessToken = await getGoogleAccessToken(config);

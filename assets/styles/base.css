@@ -118,6 +118,16 @@ body.is-drawer { overflow: hidden; }
   flex-wrap: wrap;
 }
 
+/* Grup kanan topbar: uptime + chip akun. Dipisah dari .topbar supaya `space-between` tidak menaruh
+   chip akun di tengah baris begitu uptime disisipkan runtime (lihat bindUploadOptions). */
+.topbar-kanan {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
 .nav { display: grid; gap: var(--space-1); }
 .nav button {
   display: flex;

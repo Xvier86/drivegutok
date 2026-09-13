@@ -103,9 +103,11 @@ try {
   const cookie = masuk.cookie;
   cek('login owner berhasil', masuk.status === 200, `status=${masuk.status}`);
 
-  const buat = await kirimJson('/api/admin/providers', { name: 'TG uji', kind: 'telegram', capacityBytes: 0, config: { botToken: 'token-uji', chatId: '-100123' } }, cookie);
+  // Kuota Telegram diisi manual Owner: Bot API tidak punya endpoint kuota, jadi angka itulah yang
+  // harus dilaporkan server — dulu jalur Telegram mengembalikan 0 sehingga kuotanya hilang dari UI.
+  const buat = await kirimJson('/api/admin/providers', { name: 'TG uji', kind: 'telegram', capacityBytes: 1024 * 1024 * 1024, config: { botToken: 'token-uji', chatId: '-100123' } }, cookie);
   const telegramId = buat.data?.id;
-  cek('provider Telegram bisa dibuat tanpa kuota', buat.status === 201 && buat.data?.kind === 'telegram', `status=${buat.status} ${buat.data?.error || ''}`);
+  cek('provider Telegram bisa dibuat dengan kuota manual', buat.status === 201 && buat.data?.kind === 'telegram' && buat.data?.capacity_bytes === 1073741824, `status=${buat.status} capacity=${buat.data?.capacity_bytes} ${buat.data?.error || ''}`);
   const nyala = await kirimJson(`/api/admin/providers/${telegramId}`, { enabled: true }, cookie, 'PATCH');
   cek('provider Telegram bisa diaktifkan', nyala.status === 200, `status=${nyala.status} ${nyala.data?.error || ''}`);
 
@@ -122,8 +124,9 @@ try {
   const lebihLama = await unggah('lebih-lama.bin');
   cek('dua berkas terkirim ke channel Telegram', lama.status === 201 && lebihLama.status === 201, `${lama.status}/${lebihLama.status} ${lama.data?.error || ''}`);
 
-  // Pemakaian = byte yang benar-benar terkirim. capacitySource berubah jadi 'telegram' setelah
-  // pembacaan latar belakang selesai; sebelum itu nilainya 'tersimpan' (dari kolom used_bytes).
+  // Pemakaian = byte yang benar-benar terkirim; kapasitas = kuota manual 1 GB dari form Tambah
+  // storage. capacitySource berubah jadi 'telegram' setelah pembacaan latar belakang selesai;
+  // sebelum itu nilainya 'tersimpan' (dari kolom used_bytes/capacity_bytes).
   let provider = null;
   for (let i = 0; i < 40; i += 1) {
     const respons = await api('/api/admin/overview', { headers: { cookie } });
@@ -131,7 +134,7 @@ try {
     if (provider?.capacitySource === 'telegram') break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  cek('Telegram melaporkan byte terkirim, bukan kuota', provider?.capacitySource === 'telegram' && provider?.used_bytes === 8192 && provider?.capacity_bytes === 0, `source=${provider?.capacitySource} used=${provider?.used_bytes} capacity=${provider?.capacity_bytes}`);
+  cek('Telegram melaporkan byte terkirim + kuota manual', provider?.capacitySource === 'telegram' && provider?.used_bytes === 8192 && provider?.capacity_bytes === 1073741824, `source=${provider?.capacitySource} used=${provider?.used_bytes} capacity=${provider?.capacity_bytes}`);
   cek('Telegram tidak lagi ditandai galat kuota', !provider?.capacityError, provider?.capacityError || 'tanpa galat');
 
   const dasbor = await (await api('/api/dashboard', { headers: { cookie } })).json();
