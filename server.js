@@ -171,6 +171,16 @@ function batasWaktu(promise, label, ms = PROVIDER_TIMEOUT_MS) {
     }),
   ]);
 }
+// megajs tidak mengirim event 'error' saat login gagal (kredensial salah, akun diblokir, MFA):
+// kegagalannya hanya menolak promise storage.ready. Menunggu event 'ready' saja karena itu membuat
+// SEMUA kegagalan login tampil sebagai "Mega tidak merespons dalam 8 detik" (menyesatkan) sekaligus
+// meninggalkan rejection tanpa catch. Menunggu storage.ready membuat pesan aslinya yang muncul.
+// Batas waktunya juga lebih longgar: Mega memasang tantangan proof-of-work (header X-Hashcash) di
+// depan login dan megajs menghitung tokennya di CPU — terukur ~5 detik di mesin uji dan lebih lama
+// di VPS 1 core, jadi batas 8 detik berubah jadi "tidak merespons" walau akunnya sehat. Pembacaan
+// kuota berjalan di latar belakang, jadi batas longgar ini tidak menahan halaman siapa pun.
+const PROVIDER_MEGA_TIMEOUT_MS = Number(process.env.PROVIDER_MEGA_TIMEOUT_MS || 30000);
+const tungguMega = (storage) => batasWaktu(storage.ready, 'Mega', PROVIDER_MEGA_TIMEOUT_MS);
 async function readProviderCapacity(provider) {
   const status = providerStatus(provider);
   if (!status.configured) return { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'not-configured', capacityError: `Missing: ${status.missing.join(', ')}` };
@@ -178,7 +188,10 @@ async function readProviderCapacity(provider) {
   try { config = decryptConfig(provider.config_json); } catch { return { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'error', capacityError: 'Konfigurasi provider tidak dapat dibaca.' }; }
   if (provider.kind === 'telegram') {
     const usage = db.prepare('SELECT COALESCE(SUM(size), 0) AS bytes FROM files WHERE provider = ? AND deleted_at IS NULL').get(provider.id).bytes;
-    return { usedBytes: usage, capacityBytes: 0, capacitySource: 'telegram', capacityError: 'Telegram tidak menyediakan total kuota channel.' };
+    // Telegram tidak menyediakan angka kuota channel (Bot API tidak punya endpointnya). Yang
+    // dilaporkan hanya byte yang benar-benar terkirim ke Telegram: dihitung dari baris database
+    // milik provider ini, jadi angkanya ikut turun saat berkas dihapus permanen. Bukan galat kuota.
+    return { usedBytes: usage, capacityBytes: 0, capacitySource: 'telegram' };
   }
   if (provider.kind === 'gdrive') {
     const accessToken = await getGoogleAccessToken(config);
@@ -191,10 +204,10 @@ async function readProviderCapacity(provider) {
     const { Storage } = await import('megajs');
     const storage = new Storage({ email: config.email, password: config.password });
     try {
-      await batasWaktu(new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); }), 'Mega');
+      await tungguMega(storage);
       // megajs tidak menyediakan properti storage.usedSpace / storage.capacity, jadi angka
       // kuota diambil dari getAccountInfo() -> { spaceUsed, spaceTotal }.
-      const account = await batasWaktu(storage.getAccountInfo(), 'Mega');
+      const account = await batasWaktu(storage.getAccountInfo(), 'Mega', PROVIDER_MEGA_TIMEOUT_MS);
       return { usedBytes: Number(account.spaceUsed || 0), capacityBytes: Number(account.spaceTotal || 0), capacitySource: 'mega' };
     } finally { storage.close?.(); }
   }
@@ -353,7 +366,7 @@ async function uploadToMega(file, config, name) {
   const { Storage } = await import('megajs');
   const storage = new Storage({ email: config.email, password: config.password });
   try {
-    await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
+    await tungguMega(storage);
     const upload = storage.upload({ name, size: file.size });
     fs.createReadStream(file.path).pipe(upload);
     const remote = await new Promise((resolve, reject) => { upload.on('complete', resolve); upload.on('error', reject); });
@@ -375,8 +388,14 @@ async function deleteFromTelegram(remoteFileId, config) {
   const [, chatId, messageId] = parts;
   const response = await fetch(`${TELEGRAM_API}/bot${config.botToken}/deleteMessage?chat_id=${encodeURIComponent(chatId)}&message_id=${encodeURIComponent(messageId)}`);
   const result = await response.json();
-  // "message to delete not found" berarti sudah terhapus sebelumnya — anggap sukses, bukan error
-  if (!result.ok && !/message to delete not found/i.test(result.description || '')) throw new Error(result.description || `Gagal menghapus file di Telegram (HTTP ${response.status}).`);
+  // Dua balasan ini bukan kegagalan sementara: "message to delete not found" berarti berkas sudah
+  // hilang, dan "can't be deleted" muncul untuk pesan berumur lebih dari 48 jam — Bot API Telegram
+  // memang melarang bot menghapus pesan setua itu, jadi percobaan berikutnya gagal sama. Keduanya
+  // dilaporkan skipped+unrecoverable supaya baris database tetap bisa dihapus; kalau dilempar sebagai
+  // error, berkas itu terkunci di Sampah dan tidak pernah bisa dibersihkan.
+  const permanen = /message to delete not found|can't be deleted/i.test(result.description || '');
+  if (!result.ok && !permanen) throw new Error(result.description || `Gagal menghapus file di Telegram (HTTP ${response.status}).`);
+  if (!result.ok) return { skipped: true, unrecoverable: true, reason: `Telegram menolak menghapus pesan ini (${result.description}). Bot hanya boleh menghapus pesan yang dikirim kurang dari 48 jam, jadi berkas lama perlu dihapus manual di channel kalau perlu.` };
   return { skipped: false };
 }
 async function deleteFromGoogleDrive(remoteFileId, config) {
@@ -391,7 +410,7 @@ async function deleteFromMega(remoteFileId, config) {
   const nodeId = remoteFileId.replace('mega:', '');
   const { Storage } = await import('megajs');
   const storage = new Storage({ email: config.email, password: config.password });
-  await batasWaktu(new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); }), 'Mega');
+  await tungguMega(storage);
   try {
     const node = storage.files?.[nodeId] || Object.values(storage.files || {}).find((entry) => entry.nodeId === nodeId);
     if (!node) return { skipped: true, reason: 'File tidak ditemukan di Mega, mungkin sudah terhapus sebelumnya.' };
@@ -444,7 +463,7 @@ async function sendRemoteFile(res, file, provider, disposition = 'inline', range
     // Sebelumnya jalur ini belum ada sehingga download/preview file Mega selalu gagal.
     const { Storage } = await import('megajs');
     const storage = new Storage({ email: config.email, password: config.password });
-    await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
+    await tungguMega(storage);
     const nodeId = remoteFileId.replace('mega:', '');
     const node = storage.files?.[nodeId] || Object.values(storage.files || {}).find((entry) => entry.nodeId === nodeId);
     closeProvider = () => storage.close?.();

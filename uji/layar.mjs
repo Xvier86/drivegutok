@@ -14,6 +14,9 @@ globalThis.document = new Proxy(el, { get: (_t, kunci) => (kunci === 'querySelec
 process.on('unhandledRejection', () => {});
 
 const provider = { id: 'p1', name: 'Google Drive', kind: 'gdrive', enabled: 1, used_bytes: 1024, capacity_bytes: 2048, configured: true, missing: [] };
+// Provider Telegram: tidak ada endpoint kuota di Bot API, jadi satu-satunya angka yang benar adalah
+// byte yang terkirim — badge-nya harus berbeda dari "kuota tak dilaporkan" milik provider manual.
+const providerTelegram = { id: 'p2', name: 'Telegram Channel', kind: 'telegram', enabled: 1, used_bytes: 4096, capacity_bytes: 0, capacitySource: 'telegram', capacityError: null, configured: true, missing: [] };
 const file = { id: 'f1', name: 'laporan.pdf', mime_type: 'application/pdf', size: 2048, provider: 'p1', cdn_enabled: 0, cdn_slug: null, encrypted: 0, uploaded_at: '2026-09-13T00:00:00Z', deleted_at: '2026-09-13T00:00:00Z' };
 // Satu berkas per jenis media: setiap cabang ikonMime() ikut dijalankan saat render, jadi nama ikon
 // yang hilang atau impor yang tertinggal muncul sebagai kegagalan render, bukan kartu tanpa ikon.
@@ -24,7 +27,7 @@ const mediaUji = [media('f2', 'foto.jpg', 'image/jpeg'), media('f3', 'lagu.mp3',
 const folder = { id: 'd1', name: 'Dokumen', parent_id: null, depth: 0, deleted_at: '2026-09-13T00:00:00Z' };
 const jawaban = {
   '/api/dashboard': { user: { id: 'u1', username: 'vier', role: 'owner' }, folderId: null, folders: [folder], files: [file, ...mediaUji], providers: [provider], stats: { bytes: 2048, files: 1 }, trashCount: 1, uptimeSeconds: 3600 },
-  '/api/admin/overview': { providers: [provider], files: { count: 5, bytes: 2048 }, users: [{ id: 'u1', username: 'vier', email: 'a@b.c', role: 'owner', status: 'active', created_at: '2026-09-13T00:00:00Z' }, { id: 'u2', username: 'tamu', email: 't@b.c', role: 'user', status: 'suspended', created_at: '2026-09-13T00:00:00Z' }],   // Tiga entri: dua di hari yang sama + satu di hari lain, supaya pengelompokan tanggal timeline
+  '/api/admin/overview': { providers: [provider, providerTelegram], files: { count: 5, bytes: 2048 }, users: [{ id: 'u1', username: 'vier', email: 'a@b.c', role: 'owner', status: 'active', created_at: '2026-09-13T00:00:00Z' }, { id: 'u2', username: 'tamu', email: 't@b.c', role: 'user', status: 'suspended', created_at: '2026-09-13T00:00:00Z' }],   // Tiga entri: dua di hari yang sama + satu di hari lain, supaya pengelompokan tanggal timeline
   // benar-benar diuji (dua entri pertama hanya beda satu menit, jadi zona waktu mana pun tetap
   // menaruhnya di hari yang sama).
   logs: [
@@ -54,7 +57,7 @@ Object.assign(rute, { dashboard: files.renderDashboard, admin: admin.renderAdmin
 // tersegmentasi, bukan baris provider.
 const WAJIB = {
   renderDashboard: ['storage-card', 'storage-head', 'storage-label', 'Penyimpanan', 'storage-isi', 'data-bytes', 'storage-dari', 'storage-total', 'storage-pct', 'storage-meter', 'segmen', '--i:', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn', 'class="fab"', 'upload-trigger'],
-  renderAdmin: ['provider-list', 'member-list', 'member-row', 'member-access', 'data-member', 'badge', 'ghost', 'timeline', 'tl-hari', 'tl-item', 'tl-titik', 'tl-jam'],
+  renderAdmin: ['provider-list', 'member-list', 'member-row', 'member-access', 'data-member', 'badge', 'ghost', 'timeline', 'tl-hari', 'tl-item', 'tl-titik', 'tl-jam', 'terkirim ke Telegram'],
   // Pengaturan akun: dua formulir, masing-masing dengan kolom password saat ini (tanpa itu halaman ini
   // hanya jadi teater — servernya sendiri yang menjaga, lihat uji/akun.mjs).
   renderAkun: ['form-akun-email', 'form-akun-sandi', 'akun-forms', 'akun-view', 'Pengaturan akun', 'name="currentPassword"', 'name="newPassword"', 'name="confirmPassword"', 'minlength="8"', 'vier@contoh.invalid'],
@@ -94,9 +97,16 @@ const jumlahBarisMember = (adminMarkup.match(/class="member-row"/g) || []).lengt
 if (jumlahDot === jumlahProvider && jumlahBarisMember === jawaban['/api/admin/overview'].users.length) console.log('  ok  satu dot status per provider dan satu baris per member');
 else { console.error(`  GAGAL  dot provider ${jumlahDot}/${jumlahProvider}, baris member ${jumlahBarisMember}`); gagal += 1; }
 // Satu gaya tombol untuk semua aksi sekunder: dua tombol provider + satu tombol member (owner tidak).
+// Dua tombol per provider (konfigurasi + aktif/nonaktif) dan satu tombol per member non-owner.
+const jumlahMemberBiasa = jawaban['/api/admin/overview'].users.filter((user) => user.role !== 'owner').length;
 const jumlahGhost = (adminMarkup.match(/class="ghost /g) || []).length;
-if (jumlahGhost === 3 && !/class="secondary (provider|member)/.test(adminMarkup)) console.log('  ok  aksi provider/member seragam satu gaya .ghost');
-else { console.error(`  GAGAL  aksi Owner control masih campur gaya tombol (ghost: ${jumlahGhost})`); gagal += 1; }
+if (jumlahGhost === jumlahProvider * 2 + jumlahMemberBiasa && !/class="secondary (provider|member)/.test(adminMarkup)) console.log(`  ok  aksi provider/member seragam satu gaya .ghost (${jumlahGhost})`);
+else { console.error(`  GAGAL  aksi Owner control masih campur gaya tombol (ghost: ${jumlahGhost}, harus ${jumlahProvider * 2 + jumlahMemberBiasa})`); gagal += 1; }
+// Telegram tidak melaporkan kuota: badge-nya menyebut byte yang terkirim, dan provider sehat tidak
+// boleh punya badge galat (dulu selalu merah "Kuota error" justru karena kuotanya tidak ada).
+const badgeGalat = (adminMarkup.match(/class="badge error"/g) || []).length;
+if (adminMarkup.includes('4 KB terkirim ke Telegram') && !adminMarkup.includes('kuota tak dilaporkan') && badgeGalat === 0) console.log('  ok  provider Telegram memakai badge "terkirim", tanpa galat kuota');
+else { console.error(`  GAGAL  badge provider Telegram salah (terkirim=${adminMarkup.includes('terkirim ke Telegram')} kuota-tak-dilaporkan=${adminMarkup.includes('kuota tak dilaporkan')} badge-error=${badgeGalat})`); gagal += 1; }
 // Timeline: 3 entri / 2 hari → 2 header tanggal dan 3 baris jam, dan baris jam tidak mengulang tahun.
 const kepalaHari = (adminMarkup.match(/class="tl-hari"/g) || []).length;
 const barisJam = (adminMarkup.match(/class="tl-jam"/g) || []).length;

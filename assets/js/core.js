@@ -6,7 +6,6 @@ export const app = document.querySelector('#app');
 export const toast = document.querySelector('#toast');
 export const esc = (value = '') => String(value).replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' }[char]));
 export const formatBytes = (bytes = 0) => bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-export const formatCapacity = (provider) => provider.capacity_bytes > 0 ? `${formatBytes(provider.used_bytes)} terpakai dari ${formatBytes(provider.capacity_bytes)}` : `${formatBytes(provider.used_bytes)} terpakai · kapasitas tidak disediakan provider`;
 export const notify = (message) => { toast.textContent = message; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); };
 export function showLoading(message = 'Memproses...') { if (document.querySelector('#loading-overlay')) return; document.body.insertAdjacentHTML('beforeend', `<div class="loading-overlay" id="loading-overlay"><div class="loading-card"><span class="loading-spinner"></span><strong>${esc(message)}</strong><span class="loading-dots">Mohon tunggu</span></div></div>`); }
 export function hideLoading() { document.querySelector('#loading-overlay')?.remove(); }

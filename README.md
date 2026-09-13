@@ -33,6 +33,7 @@ npm run check                  # sintaks semua berkas + uji cepat
 npm run uji                    # lingkup modul, batas waktu upload, render tiap layar, gaya CSS, ikatan handler, rapikan VPS
 npm run uji:berat              # cleanup.js, server lambat, dan pemakaian RAM saat upload besar
 bash uji/skrip-deploy.sh .     # latihan deploy di VPS palsu (pm2/npm/curl diganti stub)
+npm run uji:mega               # jalur galat login Mega (perlu akses API Mega, dilewati bila diblokir)
 ```
 
 Uji di `uji/` yang berjalan ke proses server sungguhan menyalin `server.js` ke folder sementara
@@ -107,6 +108,7 @@ STORAGE_CONFIG_KEY=ganti-dengan-secret-acak-minimal-32-karakter
 MAX_FILE_SIZE=5368709120
 TRASH_RETENTION_DAYS=30
 UPLOAD_IDLE_TIMEOUT_MS=95000
+PROVIDER_MEGA_TIMEOUT_MS=30000
 ```
 
 Generate secret:
@@ -118,6 +120,7 @@ openssl rand -base64 48
 `STORAGE_CONFIG_KEY` wajib stabil. Jika berubah, credential provider yang tersimpan terenkripsi tidak bisa didekripsi lagi. `TRASH_RETENTION_DAYS` mengatur berapa hari item di Sampah disimpan sebelum dibersihkan otomatis (default 30); nilai `0` membuat item dibersihkan begitu menu Sampah dibuka.
 `UPLOAD_IDLE_TIMEOUT_MS` (default 95000) adalah batas waktu **diamnya soket** saat mengirim berkas ke provider: kalau Telegram sudah menerima seluruh berkas lalu berhenti menjawab, permintaan dijawab `502` dengan pesan yang jelas alih-alih menggantung sampai Cloudflare memutusnya di 100 detik (`524`) tanpa baris database dan tanpa catatan log. Nilai defaultnya 95 detik karena lama jawaban Telegram tumbuh seiring ukuran berkas (terukur di VPS: 3 MB selesai di detik ke-35, 5 MB baru di detik ke-60) — batas 60 detik membuang unggahan yang sebenarnya berhasil di detik ke-61..95 sambil meninggalkan berkas yatim di channel. Jangan naikkan melewati 100000: di atas itu Cloudflare sudah lebih dulu memutus klien, dan pesannya berubah jadi halaman `524`. Batas ini hanya berlaku untuk soket yang diam; unggahan besar yang datanya terus mengalir tidak terpengaruh. Batas Nginx (`proxy_read_timeout`, lihat `vps-nginx.sh`) harus lebih longgar dari nilai ini supaya yang menjawab galat adalah aplikasi, bukan proxy.
 Semua variabel di atas sudah tersedia di `.env.example`. `setup.sh` menyalinnya menjadi `.env` dan mengisi `STORAGE_CONFIG_KEY` otomatis dengan hasil `openssl rand -base64 48`; `ecosystem.config.cjs` ikut disuntik nilai yang sama supaya PM2 memakai secret yang identik.
+`PROVIDER_MEGA_TIMEOUT_MS` (default 30000) adalah batas waktu login Mega saat kuotanya dibaca. Mega memasang tantangan proof-of-work (header `X-Hashcash`) di depan login dan megajs menghitung tokennya di CPU — terukur ±5 detik di mesin uji dan lebih lama di VPS 1 core, sehingga batas 8 detik milik provider lain membuat akun yang sehat tampil `Mega tidak merespons dalam 8 detik`. Pembacaan kuota berjalan di latar belakang, jadi batas longgar tidak menahan halaman.
 
 Jangan menaruh token Telegram, password Mega, private key Google, atau API key di Git. Credential provider dimasukkan melalui panel Owner dan disimpan terenkripsi di SQLite.
 
@@ -283,7 +286,9 @@ Server membuat OAuth access token otomatis dari JSON service account. API key Go
 4. Masukkan bot token dan channel ID pada panel.
 5. Uji upload file kecil.
 
-Telegram tidak menyediakan angka total quota channel. Dashboard menghitung penggunaan file yang tercatat di aplikasi.
+Telegram tidak menyediakan angka total kuota channel, jadi kartu provider-nya menampilkan byte yang benar-benar **terkirim ke Telegram** — bukan "kuota tak dilaporkan" dan bukan galat. Angkanya dihitung dari baris database milik provider itu, sehingga ikut turun begitu berkas dihapus permanen.
+
+Menghapus permanen berkas (atau mengosongkan Sampah) memanggil `deleteMessage`, jadi pesannya benar-benar hilang dari channel — bukan sekadar disembunyikan dari dashboard. Telegram hanya mengizinkan bot menghapus pesan yang dikirim **kurang dari 48 jam**; untuk berkas yang lebih tua situs tetap menghapusnya dari dashboard sambil menampilkan peringatan bahwa pesannya perlu dihapus manual di channel.
 
 ### Mega
 
@@ -291,6 +296,8 @@ Telegram tidak menyediakan angka total quota channel. Dashboard menghitung pengg
 2. Masukkan email dan password Mega melalui panel Owner.
 3. Aktifkan provider.
 4. Uji upload file kecil.
+
+Kredensial yang salah atau akun yang diblokir tampil apa adanya di badge provider (mis. `ENOENT ... Wrong password?` atau `EBLOCKED`), bukan sebagai "tidak merespons". Badge merah di provider Mega berarti loginnya gagal — periksa pesannya dan cek log PM2 kalau perlu.
 
 ## 9. Fitur Upload
 
@@ -307,6 +314,7 @@ Telegram tidak menyediakan angka total quota channel. Dashboard menghitung pengg
 - Menghapus file/folder dari dashboard tidak langsung membuang datanya: item dipindahkan ke **Sampah** dan masih terhitung sebagai pemakaian provider sampai dihapus permanen, sama seperti Google Drive.
 - Folder yang dipindahkan ke Sampah membawa seluruh isinya. Saat dipulihkan, hanya isi yang terhapus bersamaan yang ikut kembali; item yang sebelumnya sudah di Sampah tetap tinggal di sana.
 - Sampah dibuka lewat menu **Sampah** di sidebar: tersedia tombol pulihkan dan hapus permanen per item, plus **Kosongkan Sampah**. Item yang lebih tua dari `TRASH_RETENTION_DAYS` dibersihkan otomatis saat menu ini dibuka.
+- Hapus permanen (dan pembersihan otomatis) juga membuang berkasnya dari provider storage. Khusus Telegram, pesan di channel ikut dihapus lewat `deleteMessage`; pesan yang lebih tua dari 48 jam tidak bisa dihapus oleh bot, jadi item tetap hilang dari dashboard dengan peringatan agar channel dibersihkan manual.
 - Tombol **Pindahkan** di setiap kartu file/folder memindahkannya ke folder lain; pilihan `MyDrive (root)` mengeluarkan item dari semua folder. Folder tidak bisa dipindahkan ke dirinya sendiri atau ke turunannya.
 - Tombol **CDN** hanya muncul untuk gambar/video yang tidak dienkripsi dan dipakai untuk menyalakan atau mematikan link `/cdn/<slug>`. File terenkripsi tidak bisa dipakai sebagai CDN karena link CDN mengirim byte apa adanya.
 

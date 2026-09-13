@@ -73,7 +73,9 @@ const hapusDiProvider = {
     const [, chatId, messageId] = parts;
     const response = await fetch(`https://api.telegram.org/bot${config.botToken}/deleteMessage?chat_id=${encodeURIComponent(chatId)}&message_id=${encodeURIComponent(messageId)}`);
     const result = await response.json();
-    if (!result.ok && !/message to delete not found/i.test(result.description || '')) {
+    // "message can't be deleted" = pesan lebih tua dari 48 jam: Bot API Telegram melarang bot
+    // menghapusnya dan percobaan ulang pun sama, jadi dilewati — bukan dihitung gagal.
+    if (!result.ok && !/message to delete not found|can't be deleted/i.test(result.description || '')) {
       throw new Error(result.description || `Telegram HTTP ${response.status}`);
     }
   },
@@ -95,7 +97,9 @@ const hapusDiProvider = {
     const nodeId = remoteFileId.replace('mega:', '');
     const { Storage } = await import('megajs');
     const storage = new Storage({ email: config.email, password: config.password });
-    await new Promise((resolve, reject) => { storage.on('ready', resolve); storage.on('error', reject); });
+    // Sama seperti server.js: megajs hanya menolak promise storage.ready saat login gagal (tidak
+    // mengirim event 'error'), jadi menunggu event saja akan menggantung tanpa pesan apa pun.
+    await storage.ready;
     try {
       const node = storage.files?.[nodeId] || Object.values(storage.files || {}).find((entry) => entry.nodeId === nodeId);
       if (!node) return;
