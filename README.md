@@ -192,7 +192,7 @@ Restart setelah perubahan:
 pm2 restart gutok-drive --update-env
 ```
 
-Jalankan PM2 sebagai user aplikasi, bukan `root`. Batasi SSH, aktifkan firewall hanya untuk SSH/HTTP/HTTPS, dan jangan membuka port `3000` ke internet jika memakai Nginx.
+Jalankan PM2 sebagai user aplikasi, bukan `root`. Hal yang sama berlaku untuk **deploy**: `deploy.sh`, `update-code.sh`, dan `redeploy.sh` harus dijalankan sebagai pemilik folder aplikasi (mis. `su - admin -c 'cd /var/www/gutok-drive && bash deploy.sh'`). Dua hal rusak kalau dijalankan sebagai `root`: (a) objek Git baru ditulis milik `root`, sehingga `git merge --ff-only` berikutnya sebagai user aplikasi berhenti dengan `error: insufficient permission for adding an object to repository database .git/objects` — seluruh deploy gagal sebelum kode ditarik (`chown -R admin:admin /var/www/gutok-drive` memperbaikinya); (b) PM2 `root` membuat daemon dan proses kedua untuk aplikasi yang sama, dan proses itu tidak bisa mengikat port yang sudah dipegang — `pm2 status` menampilkan kolom `↺` terus naik sementara situs tetap dilayani instance lama. Batasi SSH, aktifkan firewall hanya untuk SSH/HTTP/HTTPS, dan jangan membuka port `3000` ke internet jika memakai Nginx.
 
 ## 6. Reverse Proxy Nginx
 
