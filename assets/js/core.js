@@ -1,6 +1,7 @@
 // Inti: referensi DOM, helper tampilan, pembungkus fetch, dan notifikasi.
 // Ikon dibangun sebagai SVG inline oleh ikon.js — tidak ada skrip pihak ketiga di browser.
-export { icon } from './ikon.js';
+import { icon } from './ikon.js';
+export { icon };
 export const app = document.querySelector('#app');
 export const toast = document.querySelector('#toast');
 export const esc = (value = '') => String(value).replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' }[char]));
@@ -15,3 +16,35 @@ export async function api(path, options = {}) { const headers = options.body ins
   const data = response.status === 204 ? null : potongan === null ? await response.json() : { error: `Server menjawab ${response.status}: ${potongan || 'tanpa keterangan'}` };
   if (!response.ok) throw new Error(data?.error || `Server error (${response.status}).`); return data; }
 export function animateView() { app.classList.remove('view-enter'); void app.offsetWidth; app.classList.add('view-enter'); }
+
+// Sidebar off-canvas di panel sempit (<720px lebar panel, lihat @container di base.css). Tombol
+// hamburger dan scrim disisipkan dari sini, bukan dari tiga markup view (file, Sampah, Owner
+// control), supaya perilakunya satu dan tidak bisa lupa dipasang di salah satu layar.
+// Keadaan drawer cuma satu kelas di <body> (`is-drawer`): CSS yang menggeser sidebar, menggelapkan
+// scrim, dan mengunci scroll — jadi JS tidak perlu tahu soal animasi.
+// Penjaga `topbar.querySelector('#drawer-toggle')` sama polanya dengan bindCdnUpload(): setiap render
+// menghasilkan markup baru, jadi ikatan dipasang sekali per render, bukan menumpuk.
+export function pasangDrawer() {
+  const shell = app.querySelector('.app-shell');
+  const topbar = shell?.querySelector('.topbar');
+  const sidebar = shell?.querySelector('.sidebar');
+  if (!topbar || !sidebar || topbar.querySelector('#drawer-toggle')) return;
+  sidebar.id = 'sidebar'; // target aria-controls tombol hamburger
+  shell.insertAdjacentHTML('beforeend', '<div class="drawer-scrim" id="drawer-scrim"></div>');
+  topbar.insertAdjacentHTML('afterbegin', `<button class="icon-btn drawer-toggle" id="drawer-toggle" aria-label="Buka menu" aria-controls="sidebar" aria-expanded="false">${icon('menu')}</button>`);
+  const tombol = topbar.querySelector('#drawer-toggle');
+  const scrim = shell.querySelector('#drawer-scrim');
+  const terbuka = () => document.body.classList.contains('is-drawer');
+  const tutup = () => { document.body.classList.remove('is-drawer'); tombol.setAttribute('aria-expanded', 'false'); tombol.focus(); };
+  const buka = () => { document.body.classList.add('is-drawer'); tombol.setAttribute('aria-expanded', 'true'); sidebar.querySelector('.nav button')?.focus(); };
+  tombol.onclick = () => (terbuka() ? tutup() : buka());
+  scrim.onclick = tutup;
+  // Klik apa pun di sidebar menutup drawer: menu mengganti markup, dan drawer yang tetap terbuka di
+  // layar baru hanya menyisakan scrim gelap. Esc mengembalikan fokus ke tombol. Listener dipasang di
+  // shell/sidebar (keduanya dibuat ulang tiap render), bukan di document, supaya tidak menumpuk.
+  sidebar.addEventListener('click', (event) => { if (event.target.closest('button')) tutup(); });
+  shell.addEventListener('keydown', (event) => { if (event.key === 'Escape' && terbuka()) tutup(); });
+  // Panel melebar lagi (rotasi tablet / jendela diperbesar): tutup drawer diam-diam — tanpa ini,
+  // scroll halaman tetap terkunci padahal hamburger sudah tidak terlihat.
+  matchMedia('(min-width: 768px)').addEventListener('change', (event) => { if (event.matches) document.body.classList.remove('is-drawer'); });
+}

@@ -71,7 +71,7 @@ rusak.forEach((baris) => console.error(`        ${baris}`));
 const cssKomponen = baca('assets/styles/components.css');
 // Komentar dibuang dulu: kalimat penjelas "tanpa box-shadow" di blok ini tidak boleh ikut terbaca
 // sebagai deklarasi box-shadow.
-const blokStorage = cssKomponen.slice(cssKomponen.indexOf('/* Widget penyimpanan'), cssKomponen.indexOf('/* Grid kartu di Owner control')).replace(/\/\*[\s\S]*?\*\//g, '');
+const blokStorage = cssKomponen.slice(cssKomponen.indexOf('/* Widget penyimpanan'), cssKomponen.indexOf('/* Owner control')).replace(/\/\*[\s\S]*?\*\//g, '');
 cek('blok CSS widget penyimpanan ditemukan', blokStorage.length > 0);
 cek('keyframes nyala-segmen dan muncul-persen ada', /@keyframes\s+nyala-segmen\s*\{/.test(blokStorage) && /@keyframes\s+muncul-persen\s*\{/.test(blokStorage));
 cek('segmen menyala berurutan lewat animation-delay calc(var(--i))', /animation-delay:\s*calc\(var\(--i\)/.test(blokStorage));
@@ -85,6 +85,21 @@ const sumberFiles = baca('assets/js/views/files.js');
 cek('animasi meter dikunci flag sekali per page-load', /let storageDimainkan = false/.test(sumberFiles) && /storageDimainkan = true/.test(sumberFiles));
 cek('animasi meter menghormati prefers-reduced-motion', /prefers-reduced-motion: reduce/.test(sumberFiles));
 
+// Owner control: daftar baris + badge + timeline. Grid kartu lama wajib benar-benar hilang, tiga
+// warna dot status wajib ada (amber = aktif, abu = nonaktif, merah redup = belum siap/kuota error),
+// dan timeline butuh garis penghubung serta header grup tanggal — tanpa itu "list" kembali jadi
+// kumpulan kotak dan tanggal terulang di setiap baris.
+const cssLayar = baca('assets/styles/views.css');
+const blokAdmin = cssKomponen.slice(cssKomponen.indexOf('/* Owner control')).replace(/\/\*[\s\S]*?\*\//g, '');
+cek('blok CSS Owner control ditemukan', blokAdmin.length > 0);
+cek('grid kartu provider/member sudah dihapus', !/\.provider-grid|\.member-grid/.test(cssKomponen + cssLayar));
+cek('dot status: amber aktif, abu nonaktif, merah redup error', /\.dot\.on \{[^}]*var\(--amber-glow\)/.test(cssKomponen) && /\.dot\.off \{[^}]*var\(--muted\)/.test(cssKomponen) && /\.dot\.error \{[^}]*var\(--danger-dim\)/.test(cssKomponen));
+cek('tombol .ghost dan .badge punya aturan sendiri', /(^|\n)\.ghost \{/.test(blokAdmin) && /(^|\n)\.badge \{/.test(blokAdmin));
+cek('badge punya varian on/warn/error', /\.badge\.on \{/.test(blokAdmin) && /\.badge\.warn \{/.test(blokAdmin) && /\.badge\.error \{/.test(blokAdmin));
+cek('baris member dipisah hairline --line-soft', /\.member-row \{[^}]*border-bottom: 1px solid var\(--line-soft\)/.test(blokAdmin));
+cek('timeline punya garis penghubung tipis dan header grup tanggal', /\.tl-item::before \{[^}]*width: 1px[^}]*var\(--line-soft\)/.test(blokAdmin) && /\.tl-hari \{/.test(blokAdmin));
+cek('ringkasan sidebar jadi daftar label/angka', /(^|\n)\.sidebar-stats \{/.test(cssLayar) && /\.stat-angka \{[^}]*var\(--f-mono\)/.test(cssLayar));
+
 // Baris unggah dan aksi hapus. Tombol hapus disembunyikan dengan `visibility` (bukan `display`)
 // selama unggah supaya tata letak baris tidak melompat, dan animasi masuk/keluar baris punya
 // keyframes sendiri — tanpa keyframes-nya, `animationend` di deleteFile() hanya menunggu timeout.
@@ -94,6 +109,46 @@ cek('keyframes rowIn dan rowKeluar ada', /@keyframes\s+rowIn\s*\{/.test(cssKompo
 cek('baris .removing memakai animasi keluar', /\.file-card\.removing \{[^}]*animation: rowKeluar/.test(cssKomponen));
 cek('tombol unggah mengapung punya aturan .fab', /(^|\n)\.fab \{/.test(cssKomponen));
 cek('bilah unggah tetap terlihat di tab CDN', /\.files-panel\[data-tab="cdn"\] \.file-card\.is-uploading \{ display: grid; \}/.test(baca('assets/styles/views.css')));
+
+// Tata letak responsif. .app-shell adalah query container: breakpoint memakai lebar panel (viewport
+// dikurangi gutter), bukan lebar viewport — sidebar 240-264px membuat panel utama selalu lebih sempit
+// dari layar, jadi breakpoint viewport salah menilai "sudah lebar" dan isi panel berdesakan.
+const cssDasar = baca('assets/styles/base.css');
+cek('.app-shell jadi query container', /\.app-shell \{[^}]*container-type: inline-size/.test(cssDasar) && /container-name: shell/.test(cssDasar));
+cek('breakpoint tata letak memakai @container shell', /@container shell \(max-width: 720px\)/.test(cssDasar) && /@container shell \(min-width: 1025px\)/.test(cssDasar) && /@container shell \(max-width: 640px\)/.test(baca('assets/styles/views.css')));
+// Sidebar di panel sempit jadi drawer: digeser dengan transform (bukan display: none) supaya ada
+// animasi, dan position absolute karena `container-type` membuat `position: fixed` di dalam
+// .app-shell ikut menggulir.
+cek('sidebar sempit jadi drawer yang digeser transform', /\.sidebar \{ position: absolute;[^}]*transform: translateX\(-102%\); visibility: hidden/.test(cssDasar));
+cek('drawer terbuka mengembalikan transform + visibility sidebar', /body\.is-drawer \.sidebar \{ transform: none; visibility: visible; \}/.test(cssDasar));
+cek('drawer punya scrim gelap dan scroll terkunci', /body\.is-drawer \.drawer-scrim \{ opacity: 1; pointer-events: auto; \}/.test(cssDasar) && /body\.is-drawer \{ overflow: hidden; \}/.test(cssDasar));
+cek('hamburger disembunyikan di panel lebar, muncul di panel sempit', /\.drawer-toggle \{ display: none; \}/.test(cssDasar) && /\.drawer-toggle \{ display: inline-flex; \}/.test(cssDasar));
+// min(180px, 100%) bukan sekadar 180px: di panel yang lebih sempit dari 180px (layar 320px), kolom
+// minimum 180px melebihi panelnya dan memicu scroll horizontal.
+cek('grid file auto-fill dengan batas min()', /grid-template-columns: repeat\(auto-fill, minmax\(min\(180px, 100%\), 1fr\)\)/.test(cssDasar));
+
+// Skala cair: tidak ada ukuran teks px tetap, dan jarak/teks inti memakai clamp/rem. Nilai px tetap
+// membuat teks tidak ikut membesar saat pengguna memperbesar ukuran font browser.
+const teksKaku = berkasCss.flatMap((berkas) => [...baca(berkas).matchAll(/font-size:\s*([^;]+);/g)].filter((cocok) => /\d+px/.test(cocok[1])).map((cocok) => `${berkas}: font-size: ${cocok[1]}`));
+cek('tidak ada font-size px tetap', teksKaku.length === 0);
+teksKaku.forEach((baris) => console.error(`        ${baris}`));
+const cssToken = baca('assets/styles/tokens.css');
+cek('skala teks dan jarak memakai clamp/rem', /--fs-body: clamp\(/.test(cssToken) && /--space-5: clamp\(/.test(cssToken) && /--gutter: clamp\(/.test(cssToken));
+
+// Lebar tetap > 320px (layar terkecil yang diuji) tanpa pembatas min()/clamp() selalu memaksa scroll
+// horizontal di suatu tempat. .provider-picker (min-width 180px) dan ikon 32-56px tetap aman.
+const lebarKaku = [];
+for (const berkas of berkasCss) {
+  for (const [index, baris] of baca(berkas).split('\n').entries()) {
+    for (const cocok of baris.matchAll(/(?:^|[;{])\s*(width|min-width):\s*([^;]+);/g)) {
+      const nilai = cocok[2].trim();
+      const px = [...nilai.matchAll(/(\d+(?:\.\d+)?)px/g)].map((angka) => Number(angka[1]));
+      if (px.length && !/min\(|clamp\(|max\(/.test(nilai) && Math.max(...px) > 320) lebarKaku.push(`${berkas}:${index + 1} ${cocok[1]}: ${nilai}`);
+    }
+  }
+}
+cek('tidak ada lebar tetap > 320px', lebarKaku.length === 0);
+lebarKaku.forEach((baris) => console.error(`        ${baris}`));
 
 const token = new Set([...berkasCss.map((berkas) => baca(berkas)).join('\n').matchAll(/--([a-z0-9-]+)\s*:/g)].map((m) => m[1]));
 const dipakaiToken = new Set();

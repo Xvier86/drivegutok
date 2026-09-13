@@ -18,8 +18,9 @@ const BERKAS = [
   'assets/js/views/files.js',
   'assets/js/views/admin.js',
   'assets/js/views/trash.js',
+  'assets/js/views/akun.js',
 ];
-const WAJIB = ['start', 'renderDashboard', 'bindDashboard', 'renderAdmin', 'bindTrashView', 'renderTrash', 'emptyTrash', 'toggleCdn', 'ke'];
+const WAJIB = ['start', 'renderDashboard', 'bindDashboard', 'renderAdmin', 'bindTrashView', 'renderTrash', 'emptyTrash', 'toggleCdn', 'renderAkun', 'bindAkun', 'chipAkun', 'ke'];
 
 let gagal = 0;
 const cek = (keterangan, syarat) => { if (syarat) console.log(`  ok  ${keterangan}`); else { console.error(`  GAGAL  ${keterangan}`); gagal += 1; } };

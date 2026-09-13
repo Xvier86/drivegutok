@@ -47,6 +47,7 @@ cek('selector #id kode tampilan dipindai', selector >= 20);
 // #trash-view punya dua listener: satu klik Owner control = dua kali GET /api/admin/overview
 // (dibuktikan di browser tiruan jsdom, 2 panggilan sebelum perbaikan, 1 sesudahnya).
 const sumberFiles = baca('assets/js/views/files.js');
+const sumberCore = baca('assets/js/core.js');
 const badanRender = sumberFiles.slice(sumberFiles.indexOf('export async function renderDashboard'), sumberFiles.indexOf('// Ikatan tombol dipasang satu kali saja'));
 cek('renderDashboard tidak memasang ikatan tombol sendiri', badanRender.length > 0 && !/bindDashboard\(\)/.test(badanRender));
 
@@ -55,6 +56,13 @@ cek('renderDashboard tidak memasang ikatan tombol sendiri', badanRender.length >
 // halaman Owner control.
 const badanCdn = sumberFiles.slice(sumberFiles.indexOf('export function bindCdnUpload'), sumberFiles.indexOf('export function bindProviderPicker'));
 cek('bindCdnUpload hanya menyisipkan tombol kalau ada #dropzone', badanCdn.includes('#dropzone'));
+
+// 4b) Dropdown "Provider upload" hanya untuk Owner. Elemen tersembunyi bukan pengaman (member tetap
+// bisa mengirim multipart langsung ke API), tapi kalau penjaga ini hilang, member melihat pilihan
+// provider yang tidak berpengaruh apa pun pada unggahannya. Sisi server diuji terpisah di
+// uji/peran-provider.mjs: `providerId` dari selain owner diabaikan, bukan dipercaya.
+const badanPicker = sumberFiles.slice(sumberFiles.indexOf('export function bindProviderPicker'), sumberFiles.indexOf('export function bindUploadOptions'));
+cek('bindProviderPicker berhenti untuk role selain owner', badanPicker.length > 0 && /state\.user\?\.role !== 'owner'/.test(badanPicker));
 
 // 5) Cabut akses member. Tombol "Cabut akses" hanya berguna kalau dua bagian ini ada: endpoint
 // owner-only di server, dan ikatan tombol di layar Owner control.
@@ -96,6 +104,36 @@ cek('hapus menunggu animationend sebelum memanggil API', /addEventListener\('ani
 cek('animationend punya batas waktu kalau tidak pernah datang', /setTimeout\(lanjut, batasMs\)/.test(badanHapus));
 cek('kelas removing dicabut saat API gagal', /classList\.remove\('removing'\)/.test(badanHapus));
 cek('tombol .file-delete tetap terikat', /querySelectorAll\('\.file-delete'\)\.forEach/.test(sumberFiles));
+
+// 10) Sidebar off-canvas. Tombol hamburger dan scrim disisipkan pasangDrawer(), bukan dirender oleh
+// tiga markup view — kalau app.js berhenti memanggilnya, di panel <720px sidebar tidak punya pemicu
+// sama sekali dan menu (Sampah, Owner control, Keluar) tidak bisa dijangkau.
+cek('app.js memanggil pasangDrawer()', /pasangDrawer\(\)/.test(sumberApp));
+cek('pasangDrawer menyisipkan tombol hamburger dan scrim', /id="drawer-toggle"/.test(sumberCore) && /id="drawer-scrim"/.test(sumberCore));
+cek('tombol hamburger memakai ikon menu', /icon\('menu'\)/.test(sumberCore));
+cek('keadaan drawer memakai kelas body is-drawer', /classList\.add\('is-drawer'\)/.test(sumberCore) && /classList\.remove\('is-drawer'\)/.test(sumberCore));
+cek('aria-expanded ikut diperbarui', /setAttribute\('aria-expanded', 'true'\)/.test(sumberCore) && /setAttribute\('aria-expanded', 'false'\)/.test(sumberCore));
+cek('Escape menutup drawer', /event\.key === 'Escape'/.test(sumberCore));
+
+// 11) Pengaturan akun. Chip akun di header adalah satu-satunya jalan masuk ke halaman ini, jadi chip
+// wajib elemen yang bisa diklik (dulu <div> — tidak bisa dijangkau Tab dan tidak bisa ditekan sama
+// sekali), semua layar berheader wajib memakai chip yang sama, dan kliknya ditangani sekali di app.js
+// (delegasi) supaya layar baru tidak perlu mengikat ulang. Sisi server diuji di uji/akun.mjs.
+const sumberAkun = baca('assets/js/views/akun.js');
+cek('chip akun dirender sebagai <button class="user-menu">', /<button class="user-menu"/.test(sumberAkun) && !/<div class="user-menu"/.test(sumberAkun));
+cek('chip akun dipakai dashboard, Sampah, dan layar akun', /chipAkun\(\)/.test(sumberFiles) && /chipAkun\(\)/.test(baca('assets/js/views/trash.js')) && /chipAkun\(\)/.test(sumberAkun));
+cek('app.js mendaftarkan rute.akun', /rute\.akun = renderAkun/.test(sumberApp));
+cek('app.js memanggil bindAkun() tiap render', /bindAkun\(\)/.test(sumberApp.slice(sumberApp.indexOf('const pasangUlang'))));
+cek('klik .user-menu membuka layar akun', /closest\('\.user-menu'\)[\s\S]{0,80}ke\('akun'\)/.test(sumberApp));
+// #logout dulu diikat di dua tempat (bindDashboard + bindTrashView) dan tidak diikat sama sekali di
+// layar akun. Sekarang satu handler delegasi di app.js, sehingga berlaku di semua layar.
+cek('Keluar ditangani sekali (delegasi) di app.js', /closest\('#logout'\)/.test(sumberApp) && !/#logout/.test(sumberFiles) && !/#logout/.test(baca('assets/js/views/trash.js')));
+cek('server.js punya PATCH /api/account/email dan /api/account/password', /app\.patch\('\/api\/account\/email', requireUser/.test(sumberServer) && /app\.patch\('\/api\/account\/password', requireUser/.test(sumberServer));
+// Penjaga inti halaman ini: perubahan identitas akun TIDAK boleh diterima tanpa password saat ini.
+// Dua endpoint = dua pemeriksaan; satu yang terlewat sudah cukup untuk pengambilalihan akun.
+cek('kedua endpoint akun memeriksa password saat ini', (sumberServer.match(/passwordSaatIniSalah\(res\)/g) || []).length === 2 && /hash\(String\(req\.body\.currentPassword/.test(sumberServer));
+cek('akun.js memakai endpoint email dan password', /'\/api\/account\/email', \{ method: 'PATCH'/.test(sumberAkun) && /'\/api\/account\/password', \{ method: 'PATCH'/.test(sumberAkun));
+cek('akun.js menjelaskan status verifikasi dari balasan server', /data\.verificationRequired/.test(sumberAkun));
 
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

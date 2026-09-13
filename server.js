@@ -669,6 +669,51 @@ app.post('/api/login', (req, res) => {
 app.post('/api/logout', (req, res) => { const token = req.headers.cookie?.match(/mydrive_session=([^;]+)/)?.[1]; if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token); res.setHeader('Set-Cookie', `mydrive_session=; Max-Age=0; ${cookieOptions}`); return res.status(204).end(); });
 
 app.get('/api/me', requireUser, (req, res) => json(res, { user: req.user }));
+
+// ---------------------------------------------------------------------------
+// Pengaturan akun: ubah email dan ubah password.
+// Keduanya WAJIB menyertakan password saat ini. Sesi berlaku 7 hari dan cookie-nya HttpOnly, jadi
+// satu cookie yang bocor (perangkat dipinjam, addon browser, cadangan profil) cukup untuk memakai
+// SEMUA endpoint lain apa adanya — termasuk mengganti email, yang kalau dibiarkan akan jadi jalan
+// pengambilalihan akun: email baru + "lupa password" = akun berpindah tangan tanpa pernah tahu
+// password lama. Karena itu perubahan identitas tidak cukup dengan sesi: pemanggil harus tahu
+// password saat ini juga.
+//
+// Verifikasi email: aplikasi ini TIDAK punya pengiriman email sama sekali (tidak ada SMTP/nodemailer
+// di seluruh server.js), jadi tidak ada alur verifikasi untuk dijalankan dan email baru langsung
+// aktif. Balasan tetap memuat `verificationRequired: false` supaya penjelasan di UI tidak
+// menebak-nebak: kalau nanti verifikasi email ditambahkan, nilainya tinggal diubah di satu tempat.
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const passwordSaatIniSalah = (res) => json(res, { error: 'Password saat ini salah.' }, 401);
+app.patch('/api/account/email', requireUser, (req, res) => {
+  const baru = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!emailPattern.test(baru)) return json(res, { error: 'Email baru tidak valid.' }, 400);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (user.password_hash !== hash(String(req.body.currentPassword || ''))) return passwordSaatIniSalah(res);
+  if (db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(baru, user.id)) return json(res, { error: 'Email sudah digunakan akun lain.' }, 409);
+  db.prepare('UPDATE users SET email = ? WHERE id = ?').run(baru, user.id);
+  audit(req.user.id, 'update_email', 'user', user.id);
+  return json(res, { user: { ...req.user, email: baru }, verificationRequired: false });
+});
+app.patch('/api/account/password', requireUser, (req, res) => {
+  const { newPassword, confirmPassword } = req.body;
+  // Minimal 8 karakter, sama dengan /api/setup dan /api/admin/users, supaya aturan panjangnya satu.
+  if (!newPassword || String(newPassword).length < 8) return json(res, { error: 'Password baru minimal 8 karakter.' }, 400);
+  if (String(newPassword) !== String(confirmPassword || '')) return json(res, { error: 'Konfirmasi password baru tidak sama.' }, 400);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (user.password_hash !== hash(String(req.body.currentPassword || ''))) return passwordSaatIniSalah(res);
+  // Memakai hash() yang sama dengan login dan /api/setup — satu-satunya metode hashing di project ini.
+  // ponytail: sha256 tanpa salt itu lemah untuk password; naikkan ke scrypt + rehash saat login kalau
+  // daftar user sudah tidak bisa dimigrasi sekaligus (lihat catatan di PR/commit).
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash(String(newPassword)), user.id);
+  // Sesi lain diakhiri: password diganti biasanya karena ada yang bocor, dan membiarkan sesi lama hidup
+  // membuat penggantian tidak ada gunanya. Sesi yang sedang dipakai (token di cookie permintaan ini)
+  // dipertahankan supaya user tidak terlempar ke halaman login setelah mengganti passwordnya sendiri.
+  const token = req.headers.cookie?.match(/mydrive_session=([^;]+)/)?.[1] || '';
+  const sesiLain = db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(user.id, token).changes;
+  audit(req.user.id, 'update_password', 'user', user.id);
+  return json(res, { ok: true, otherSessionsEnded: sesiLain });
+});
 app.get('/api/dashboard', requireUser, (req, res) => {
   const requestedFolderId = req.query.folderId || null;
   // Folder yang sudah masuk Sampah (atau bukan milik user) tidak boleh jadi lokasi aktif,

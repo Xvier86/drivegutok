@@ -17,14 +17,14 @@
   background: linear-gradient(180deg, var(--panel), var(--ink-soft));
   box-shadow: var(--shadow);
 }
-.login-card h1 { font-size: 26px; line-height: 1.25; margin: var(--space-2) 0; }
+.login-card h1 { font-size: var(--fs-title); line-height: 1.25; margin: var(--space-2) 0; }
 .login-card form { margin-top: var(--space-3); }
-.login-card .brand { font-size: 21px; }
+.login-card .brand { font-size: var(--fs-xl); }
 
 .brand-logo { width: 26px; height: 26px; border-radius: var(--radius-sm); object-fit: cover; }
 
-/* Dasbor file: satu kolom daftar (tanpa kolom kanan) supaya isi folder jadi fokus utama. */
-.files-panel .panel-heading h2 { font-size: 16px; }
+/* Dasbor file: satu kolom daftar (tanpa kolom kanan) supaya isi folder jadi fokus utama.
+   Ukuran h2 panel mengikuti h2 global (var(--fs-lg)) — tidak perlu override px lagi. */
 .files-panel .grid { margin-top: var(--space-2); }
 .panel.stats h3 { color: var(--muted-strong); }
 .file-list { gap: 2px; }
@@ -32,7 +32,7 @@
 /* Tab pemisah berkas biasa dan berkas CDN. Pindah tab cuma mengganti data-tab di panel — CSS yang
    menyembunyikan baris, jadi tidak ada permintaan ulang ke server. */
 .tabs { display: inline-flex; gap: var(--space-1); padding: 4px; border: 1px solid var(--line-soft); border-radius: var(--radius-pill); background: var(--panel-soft); }
-.tab { display: inline-flex; align-items: center; gap: var(--space-2); padding: 8px var(--space-4); border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: var(--muted-strong); font: inherit; font-size: 13px; cursor: pointer; transition: background var(--motion), color var(--motion), border-color var(--motion); }
+.tab { display: inline-flex; align-items: center; gap: var(--space-2); padding: 8px var(--space-4); border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: var(--muted-strong); font: inherit; font-size: var(--fs-md); cursor: pointer; transition: background var(--motion), color var(--motion), border-color var(--motion); }
 .tab:hover { color: var(--paper); }
 .tab.active { background: var(--gold-soft); border-color: var(--gold-dark); color: var(--gold-bright); }
 .files-panel[data-tab="file"] .file-card.is-cdn,
@@ -45,24 +45,32 @@
 
 /* Penyimpanan di sidebar: versi ringkas, karena sidebar hanya selebar 264px. */
 .sidebar .storage-card { padding: var(--space-4); }
-.sidebar .storage-card .storage-isi { font-size: 19px; }
+.sidebar .storage-card .storage-isi { font-size: var(--fs-xl); }
+
+/* Pengaturan akun: dua formulir berdampingan saat panel lebar, satu kolom saat sempit. auto-fit +
+   min() supaya tidak perlu media query dan tidak pernah meluber di layar 320px. */
+.akun-forms { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr)); align-items: start; }
 
 /* Sampah: satu kolom baris, sama seperti daftar file. */
 .trash-list { gap: var(--space-1); }
 .trash-row .file-name { font-weight: 500; }
 .trash-row .file-icon { width: 38px; height: 38px; }
 
-/* Owner control */
-.panel .provider .action-row { flex-wrap: wrap; }
-.panel.stats .provider .provider-meta { max-width: 44ch; }
+/* Owner control: ringkasan sidebar jadi daftar fakta terpisah (label kiri, angka kanan) — bukan satu
+   baris panjang yang digabung "·". Daftar provider/member dan timeline aktivitas memakai aturan
+   bersama di components.css (.provider, .member-row, .timeline). */
+.sidebar-stats { display: grid; }
+.stat { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); padding: 4px 0; border-bottom: 1px solid var(--line-soft); }
+.stat:last-child { border-bottom: 0; }
+.stat-nama { color: var(--muted); font-size: var(--fs-sm); }
+.stat-angka { font-family: var(--f-mono); color: var(--muted-strong); font-size: var(--fs-sm); }
 
 /* Member tidak melihat rincian provider: baris per provider sudah tidak dirender lagi di sidebar
    (lihat widget penyimpanan di files.js), jadi satu-satunya penjagaan yang tersisa adalah
    applyRoleVisibility() yang menyembunyikan nama provider di meta tiap berkas. */
-.admin-card p { color: var(--muted); font-size: 13px; }
 
-@media (max-width: 640px) {
-  .login-card { padding: var(--space-5); }
+/* Baris Sampah: tombolnya turun ke baris sendiri di panel sempit supaya nama item tetap terbaca. */
+@container shell (max-width: 640px) {
   .trash-row { flex-wrap: wrap; }
   .trash-actions { width: 100%; justify-content: flex-end; }
 }

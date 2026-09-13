@@ -11,14 +11,14 @@ body {
   background-attachment: fixed;
   color: var(--paper);
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--fs-body);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 
 h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; }
-h2 { font-size: 17px; }
-h3 { font-size: 15px; }
+h2 { font-size: var(--fs-lg); }
+h3 { font-size: var(--fs-body); }
 p { margin: 0; }
 a { color: var(--gold-bright); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -30,18 +30,42 @@ img { max-width: 100%; display: block; }
   border-radius: var(--radius-sm);
 }
 
+/* Kerangka aplikasi. .app-shell adalah query container: semua breakpoint di bawah memakai lebar
+   panel ini (viewport dikurangi gutter), bukan lebar viewport — sidebar 240-264px membuat panel
+   utama selalu jauh lebih sempit dari layar, jadi breakpoint viewport membuat panel "kelihatan
+   lebar" padahal isinya sudah sempit.
+   Grid-nya flex-wrap, bukan grid-template-columns: sidebar menggulir ke bawah sendiri saat ruang
+   tidak cukup tanpa perlu satu pun media query yang harus disinkronkan dengan container query.
+   min-height 100dvh supaya drawer di layar sempit setinggi layar walau isi halaman pendek. */
 .app-shell {
-  display: grid;
-  grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  position: relative;
+  container-type: inline-size;
+  container-name: shell;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: var(--space-5);
   width: 100%;
   max-width: var(--content);
+  min-height: 100dvh;
   margin: 0 auto;
-  padding: var(--space-5) var(--space-6);
-  align-items: start;
+  padding-block: calc(var(--space-5) + env(safe-area-inset-top, 0px)) calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+  padding-inline: calc(var(--gutter) + env(safe-area-inset-left, 0px)) calc(var(--gutter) + env(safe-area-inset-right, 0px));
 }
 
+/* Tombol hamburger dan scrim drawer: disembunyikan di panel lebar, dimunculkan container query
+   sempit di bawah. Keduanya disisipkan pasangDrawer() (core.js). */
+.drawer-toggle { display: none; }
+.drawer-scrim { display: none; }
+
+/* Scroll dikunci saat drawer terbuka. Wajib: `.app-shell` adalah query container, dan containment
+   membuat `position: fixed` di dalamnya ikut menggulir — jadi drawer memakai `position: absolute`
+   setinggi panel, dan halaman tidak boleh bergulir selama drawer terbuka. */
+body.is-drawer { overflow: hidden; }
+
 .sidebar {
+  flex: 1 1 var(--sidebar);
+  max-width: 100%;
   position: sticky;
   top: var(--space-5);
   display: flex;
@@ -62,15 +86,21 @@ img { max-width: 100%; display: block; }
   border-top: 1px solid var(--line-soft);
 }
 
+/* Basis 320px: cukup untuk daftar file, tapi masih bisa menyusut (min-width 0) — jadi panel utama
+   tidak pernah memaksa halaman melebar di layar sempit. Angka 999 membuat sisa ruang jatuh ke
+   panel ini, bukan ke sidebar. */
 .main {
+  flex: 999 1 20rem;
   display: grid;
   gap: var(--space-4);
   min-width: 0;
 }
 
+/* Kolom kanan (Owner control) hanya dibuka container query lebar di bawah; di bawahnya satu kolom,
+   supaya tidak ada dua kolom sempit berdampingan yang memaksa scroll horizontal. */
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 330px);
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
   align-items: start;
   min-width: 0;
@@ -116,7 +146,7 @@ img { max-width: 100%; display: block; }
   align-items: center;
   gap: var(--space-2);
   font-family: var(--font-display);
-  font-size: 19px;
+  font-size: var(--fs-lg);
   font-weight: 600;
   color: var(--paper);
 }
@@ -124,15 +154,15 @@ img { max-width: 100%; display: block; }
 
 .eyebrow {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.subtle { color: var(--muted); font-size: 13px; }
-.error { color: var(--danger); font-size: 13px; }
+.subtle { color: var(--muted); font-size: var(--fs-md); }
+.error { color: var(--danger); font-size: var(--fs-md); }
 
-.greeting { font-size: 30px; line-height: 1.2; }
-.greeting-sm { font-size: 30px; margin-top: var(--space-2); }
+.greeting { font-size: var(--fs-display); line-height: 1.2; }
+.greeting-sm { font-size: var(--fs-display); margin-top: var(--space-2); }
 
 /* Kepala tayangan: judul + ringkasan di kiri, kontrol (tab/tombol) di kanan. Dipakai layar file,
    Sampah, dan Owner control supaya hierarki ketiga layar sama seperti Drive. */
@@ -143,14 +173,16 @@ img { max-width: 100%; display: block; }
   gap: var(--space-4);
   flex-wrap: wrap;
 }
-.view-title { font-size: 22px; line-height: 1.2; }
+.view-title { font-size: var(--fs-title); line-height: 1.2; }
 
 .action-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.workspace-label { margin: 0 0 var(--space-2); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+.workspace-label { margin: 0 0 var(--space-2); color: var(--muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.08em; }
 
+/* Lebar kartu minimum 180px tapi dibatasi lebar panel (min(180px, 100%)) — tanpa batas itu,
+   satu kolom 180px di layar 320px membuat grid melebihi panelnya dan memicu scroll horizontal. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
   gap: var(--space-3);
 }
 
@@ -161,23 +193,29 @@ img { max-width: 100%; display: block; }
 .mx-auto { margin-inline: auto; }
 .text-right { text-align: right; }
 .btn-block { width: 100%; justify-content: center; }
-.setup-link { margin-top: var(--space-4); text-align: center; color: var(--muted); font-size: 12px; }
+.setup-link { margin-top: var(--space-4); text-align: center; color: var(--muted); font-size: var(--fs-sm); }
 .empty-state { grid-column: 1 / -1; padding: var(--space-5) 0; }
 
-@media (max-width: 1024px) {
-  .app-shell { grid-template-columns: minmax(0, 1fr); padding: var(--space-4); }
-  .sidebar { position: static; }
-  .layout { grid-template-columns: minmax(0, 1fr); }
-  .nav { grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
+/* Breakpoint di bawah ini memakai lebar panel (container query .app-shell), bukan lebar viewport.
+   Ambang 720px sengaja dipilih supaya cocok dengan 768px layar: lebar panel = viewport dikurangi
+   dua gutter (clamp 12-32px), jadi 720px di sini sama dengan sekitar 768px viewport. */
+@container shell (max-width: 720px) {
+  /* Sidebar jadi drawer off-canvas: digeser dengan transform (bukan display: none) supaya ada
+     animasi masuk/keluar. position: absolute, bukan fixed, karena containment `.app-shell`
+     membuat fixed di dalamnya ikut menggulir — halaman dikunci lewat body.is-drawer selama terbuka. */
+  /* visibility: hidden saat tertutup supaya tombol di sidebar yang di luar layar tidak bisa dijangkau
+     Tab; visibility ikut ditransisikan, jadi hilangnya baru terjadi setelah geseran selesai. */
+  .sidebar { position: absolute; inset-block: 0; left: 0; width: min(84%, 20rem); z-index: 45; overflow-y: auto; border-radius: 0 var(--radius-lg) var(--radius-lg) 0; transform: translateX(-102%); visibility: hidden; transition: transform var(--motion), visibility var(--motion); }
+  body.is-drawer .sidebar { transform: none; visibility: visible; }
+  .drawer-toggle { display: inline-flex; }
+  .drawer-scrim { display: block; position: absolute; inset: 0; z-index: 44; background: rgba(9, 8, 5, 0.66); opacity: 0; pointer-events: none; transition: opacity var(--motion); }
+  body.is-drawer .drawer-scrim { opacity: 1; pointer-events: auto; }
+  .topbar { align-items: flex-start; }
 }
 
-@media (max-width: 640px) {
-  body { font-size: 14px; }
-  .app-shell { padding: var(--space-3); gap: var(--space-3); }
-  .sidebar { padding: var(--space-4); }
-  .greeting, .greeting-sm { font-size: 24px; }
-  .grid { grid-template-columns: minmax(0, 1fr); }
-  .topbar { align-items: flex-start; }
+/* Kolom kanan Owner control baru sepadan setelah panel benar-benar lebar. */
+@container shell (min-width: 1025px) {
+  .layout { grid-template-columns: minmax(0, 1fr) minmax(16rem, 21rem); }
 }
 
 @media (prefers-reduced-motion: reduce) {

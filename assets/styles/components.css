@@ -57,7 +57,7 @@
 
 /* Kolom isian */
 .field { display: grid; gap: var(--space-2); margin-bottom: var(--space-3); }
-.field label { color: var(--muted); font-size: 12px; }
+.field label { color: var(--muted); font-size: var(--fs-sm); }
 input, select, textarea {
   width: 100%;
   padding: 10px var(--space-3);
@@ -69,8 +69,8 @@ input, select, textarea {
 }
 input[type="checkbox"] { width: auto; }
 input:focus, select:focus, textarea:focus { border-color: var(--gold); }
-.encrypt-option { display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); font-size: 13px; }
-.provider-picker { display: grid; gap: var(--space-1); min-width: 180px; color: var(--muted); font-size: 11px; }
+.encrypt-option { display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); font-size: var(--fs-md); }
+.provider-picker { display: grid; gap: var(--space-1); min-width: 180px; color: var(--muted); font-size: var(--fs-xs); }
 
 /* Panel */
 .panel {
@@ -119,7 +119,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .file-card.is-cdn .file-icon { background: rgba(231, 185, 63, 0.24); color: var(--gold-bright); }
 .file-info { display: grid; gap: 1px; min-width: 0; }
 .file-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-meta { color: var(--muted); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-actions {
   display: flex;
   flex-wrap: wrap;
@@ -134,12 +134,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
    lihat deleteFile() di files.js. */
 .file-card.is-uploading { animation: rowIn 280ms var(--motion) both; }
 .file-card.is-uploading .file-delete { visibility: hidden; }
-.upl-meta { display: flex; align-items: center; gap: var(--space-2); font-size: 12px; color: var(--muted); }
+.upl-meta { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-sm); color: var(--muted); }
 .upl-bar { flex: 1; min-width: 60px; height: 4px; border-radius: var(--radius-pill); background: var(--amber-unlit); overflow: hidden; }
 .upl-fill { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--gold); transition: width 120ms linear; }
 .upl-angka, .upl-persen { font-family: var(--f-mono); }
 .upl-persen { color: var(--muted-strong); }
-.badge-selesai { display: none; align-items: center; gap: var(--space-1); color: var(--gold-bright); font-size: 12px; }
+.badge-selesai { display: none; align-items: center; gap: var(--space-1); color: var(--gold-bright); font-size: var(--fs-sm); }
 .file-card.is-selesai .badge-selesai { display: inline-flex; animation: rowIn 200ms var(--motion) both; }
 .file-card.is-selesai .upl-meta { display: none; }
 
@@ -156,19 +156,26 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .provider:last-child { border-bottom: 0; }
 .provider-row { padding: var(--space-4) 0; }
 .provider-name { display: flex; align-items: center; gap: var(--space-2); font-weight: 500; }
-.provider-meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.provider-mini { display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); font-size: 12px; }
+.provider-meta { color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.provider-mini { display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); font-size: var(--fs-sm); }
 .member-access { flex: none; }
+/* Dot status provider/member: amber = aktif, abu = nonaktif, merah redup = belum siap atau kuota
+   gagal dibaca. Tiga keadaan, tiga warna — bukan tiga kartu yang tampak sama. */
 .dot { width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--muted); flex: none; }
-.dot.on { background: var(--gold); }
-.dot.off { background: var(--line); }
+.dot.on { background: var(--amber-glow); }
+.dot.off { background: var(--muted); opacity: 0.55; }
+.dot.error { background: var(--danger-dim); }
 .stats { display: grid; gap: var(--space-3); }
-.server-status { color: var(--muted); font-size: 12px; }
+.server-status { color: var(--muted); font-size: var(--fs-sm); }
 .avatar { display: grid; place-items: center; width: 38px; height: 38px; border-radius: var(--radius-pill); background: var(--gold-soft); color: var(--gold-bright); font-weight: 600; }
-.user-menu { display: flex; align-items: center; gap: var(--space-3); }
+/* Chip akun di header: satu-satunya jalan masuk ke Pengaturan akun (klik chip → #/akun lewat
+   delegasi di app.js). Elemennya <button>, jadi reset tampilan tombol bawaan browser harus eksplisit —
+   tanpa ini chip tampil sebagai kotak abu-abu bawaan, bukan seperti bagian header. */
+.user-menu { display: flex; align-items: center; gap: var(--space-2); padding: 4px 6px; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: inherit; font: inherit; text-align: inherit; cursor: pointer; transition: border-color var(--motion), background var(--motion); }
+.user-menu:hover { border-color: var(--line); background: var(--panel-soft); }
 .user-menu small { display: block; color: var(--muted); }
 
-.breadcrumb { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; color: var(--muted); font-size: 12px; }
+.breadcrumb { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); }
 .breadcrumb .crumb { background: none; border: 0; padding: 0; color: var(--muted-strong); font: inherit; cursor: pointer; }
 .breadcrumb .crumb.current { color: var(--gold-bright); cursor: default; }
 
@@ -192,7 +199,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .toast {
   position: fixed;
   left: 50%;
-  bottom: var(--space-5);
+  bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
   z-index: 60;
   transform: translate(-50%, 12px);
   padding: 10px var(--space-4);
@@ -211,20 +218,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .loading-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(9, 8, 5, 0.78); }
 .loading-card { display: grid; justify-items: center; gap: var(--space-3); padding: var(--space-5) var(--space-6); border: 1px solid var(--gold-dark); border-radius: var(--radius-lg); background: var(--panel); color: var(--gold-bright); box-shadow: var(--shadow); }
 .loading-spinner { width: 34px; height: 34px; border: 3px solid var(--line); border-top-color: var(--gold-bright); border-radius: var(--radius-pill); animation: spin 0.9s linear infinite; }
-.loading-dots { color: var(--muted); font-size: 12px; }
-
-.admin-card { display: grid; gap: var(--space-2); }
+.loading-dots { color: var(--muted); font-size: var(--fs-sm); }
 
 /* Widget penyimpanan: satu meter tersegmentasi untuk akumulasi semua provider. Tidak ada baris,
    nama, atau status per provider di sini — rincian itu hanya ada di Owner control. Tanpa
    box-shadow: pemisahan bagian hanya lewat hairline --line dan warna segmen. */
 .storage-card { display: grid; gap: var(--space-3); border-color: var(--line); }
 .storage-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
-.storage-label { font-family: var(--font-display); font-size: 13px; color: var(--muted-strong); }
-.storage-pct { font-family: var(--f-mono); font-size: 12px; color: var(--amber-glow); }
+.storage-label { font-family: var(--font-display); font-size: var(--fs-md); color: var(--muted-strong); }
+.storage-pct { font-family: var(--f-mono); font-size: var(--fs-sm); color: var(--amber-glow); }
 .storage-readout { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
-.storage-isi { font-family: var(--f-mono); font-size: 21px; color: var(--paper); }
-.storage-dari { font-size: 11px; color: var(--muted); }
+.storage-isi { font-family: var(--f-mono); font-size: var(--fs-xl); color: var(--paper); }
+.storage-dari { font-size: var(--fs-xs); color: var(--muted); }
 .storage-total { font-family: var(--f-mono); color: var(--muted-strong); }
 .storage-meter { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--ink-soft); }
 .segmen { flex: 1; height: 12px; border-radius: 2px; background: var(--amber-unlit); }
@@ -238,13 +243,44 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 
 @keyframes muncul-persen { from { opacity: 0; } }
 
-/* Grid kartu di Owner control: provider dan member sejajar dalam kolom otomatis. */
-.provider-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: var(--space-3); }
-.member-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: var(--space-3); }
-.provider-grid .provider, .member-grid .provider { padding: var(--space-4); border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--panel-soft); }
-.provider-grid .provider { flex-direction: column; align-items: stretch; gap: var(--space-3); }
-.provider-grid .provider .action-row { justify-content: flex-start; }
-.provider-grid .provider-meta { max-width: none; }
+/* Owner control: daftar baris (bukan grid kartu) untuk provider dan member, plus timeline
+   aktivitas. Pemisahan hanya lewat hairline --line-soft; keadaan dibedakan warna dot dan badge,
+   bukan bayangan atau border yang sama untuk semua kartu. */
+.provider-list, .member-list { display: grid; }
+.provider-id { display: grid; gap: var(--space-1); min-width: 0; }
+.provider-aksi { flex: none; }
+.member-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--line-soft); }
+.member-row:last-child { border-bottom: 0; }
+.member-id { display: grid; gap: 1px; flex: 1 1 12rem; min-width: 0; }
+.member-nama { font-weight: 500; }
+.member-email, .member-sejak { color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.member-sejak { flex: none; }
+
+/* Badge: satu fakta per elemen, jadi tidak ada lagi kalimat meta yang digabung "·". */
+.badge-row { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid var(--line-soft); border-radius: var(--radius-pill); background: var(--ink-soft); color: var(--muted-strong); font-size: var(--fs-xs); }
+.badge.on { border-color: var(--gold-dark); background: var(--gold-soft); color: var(--gold-bright); }
+.badge.warn { border-color: var(--line); color: var(--muted); }
+.badge.error { border-color: var(--danger-dim); color: var(--danger); }
+
+/* Tombol ghost: satu gaya untuk semua aksi sekunder di Owner control (Konfigurasi/Nonaktifkan/
+   Cabut akses), supaya tidak ada campuran solid dan outline yang tidak konsisten. */
+.ghost { display: inline-flex; align-items: center; gap: var(--space-2); padding: 6px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted-strong); font: inherit; font-size: var(--fs-md); cursor: pointer; transition: color var(--motion), border-color var(--motion), background var(--motion); }
+.ghost:hover { border-color: var(--line); background: var(--panel); color: var(--paper); }
+.ghost.danger:hover { border-color: var(--danger); color: var(--danger); }
+
+/* Timeline aktivitas: garis tipis .tl-item::before menyambung antar entri. Tanggal cukup sekali
+   sebagai header grup (.tl-hari), baris di bawahnya hanya jam — bukan "13 Sep 2026" diulang. */
+.timeline { display: grid; list-style: none; margin: 0; padding: 0; }
+.tl-hari { padding: var(--space-3) 0 var(--space-1); color: var(--muted); font-size: var(--fs-xs); }
+.tl-item { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: var(--space-3); padding: var(--space-2) 0; }
+.tl-item::before { content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; background: var(--line-soft); }
+.tl-item:last-child::before { display: none; }
+.tl-titik { position: relative; width: 7px; height: 7px; margin-top: 6px; border-radius: var(--radius-pill); background: var(--gold); }
+.tl-isi { display: grid; gap: 2px; min-width: 0; }
+.tl-aksi { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin: 0; }
+.tl-oleh { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+.tl-jam { font-family: var(--f-mono); font-size: var(--fs-xs); color: var(--muted); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -259,17 +295,19 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
   border-radius: var(--radius);
   color: var(--muted);
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .dropzone.drag { border-color: var(--gold); color: var(--gold-bright); background: var(--gold-soft); }
 
 /* Tombol Unggah mengapung di kanan bawah: aksi utama yang selalu terjangkau, jadi toolbar cukup
    menyisakan Folder baru dan Upload CDN. Radius penuh + bayangan amber supaya terlihat sebagai
-   tombol aksi, bukan sekadar ikon. */
+   tombol aksi, bukan sekadar ikon. Markup-nya sengaja DI LUAR .app-shell: containment dari
+   `container-type` membuat `position: fixed` di dalamnya ikut menggulir, jadi FAB akan hilang
+   dari sudut layar saat halaman digulir. */
 .fab {
   position: fixed;
-  right: var(--space-5);
-  bottom: var(--space-5);
+  right: calc(var(--space-5) + env(safe-area-inset-right, 0px));
+  bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
   z-index: 30;
   display: grid;
   place-items: center;
