@@ -4,6 +4,9 @@ import Database from 'better-sqlite3';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { once } from 'node:events';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +33,14 @@ fs.mkdirSync(tempDir, { recursive: true });
 
 const db = new Database(path.join(dataDir, 'mydrive.sqlite'));
 db.pragma('journal_mode = WAL');
+// Tiga pragma ini untuk VPS kecil: `synchronous = NORMAL` berhenti memaksa fsync tiap transaksi
+// (dengan WAL, paling banyak satu transaksi terakhir hilang saat listrik mati — bukan korup),
+// `busy_timeout` mencegah SQLITE_BUSY ketika pembersih sampah menulis bersamaan, dan
+// `cache_size = -8000` memasang batas tegas 8 MB RAM untuk cache halaman SQLite.
+db.pragma('synchronous = NORMAL');
+db.pragma('busy_timeout = 5000');
+db.pragma('cache_size = -8000');
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at TEXT NOT NULL);
@@ -71,6 +82,13 @@ const providerRequirements = {
   gdrive: ['folderId']
 };
 const providerKinds = new Set(Object.keys(providerRequirements));
+// Telegram API bisa diarahkan ke server Bot API lokal lewat env ini (dipakai uji RAM di uji/ram.mjs).
+const TELEGRAM_API = (process.env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '');
+const TELEGRAM_FILE_API = `${TELEGRAM_API}/file`;
+// Google Drive API juga bisa diarahkan ke server tiruan saat uji (uji/ram.mjs) supaya jalur upload
+// bisa diukur tanpa mengirim file besar ke internet.
+const GOOGLE_API = (process.env.GOOGLE_API_BASE || 'https://www.googleapis.com').replace(/\/+\$/, '');
+
 const configKey = crypto.createHash('sha256').update(process.env.STORAGE_CONFIG_KEY || 'change-this-storage-config-key').digest();
 function encryptConfig(config) {
   const iv = crypto.randomBytes(12);
@@ -149,7 +167,7 @@ async function readProviderCapacity(provider) {
   }
   if (provider.kind === 'gdrive') {
     const accessToken = await getGoogleAccessToken(config);
-    const response = await fetch('https://www.googleapis.com/drive/v3/about?fields=storageQuota', { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
+    const response = await fetch(`${GOOGLE_API}/drive/v3/about?fields=storageQuota`, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
     if (!response.ok) return { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'error', capacityError: `Google Drive API ${response.status}` };
     const quota = (await response.json()).storageQuota || {};
     return { usedBytes: Number(quota.usage || 0), capacityBytes: Number(quota.limit || 0), capacitySource: 'google-drive' };
@@ -208,37 +226,94 @@ function refreshCapacityInBackground(provider) {
     .catch((error) => capacityCache.set(provider.id, { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'error', capacityError: error.message, at: Date.now() }))
     .finally(() => capacityInFlight.delete(provider.id));
 }
+// Kirim badan multipart sebagai stream dengan Content-Length pasti, lewat node:http/https.
+// fetch() Node (undici) menahan seluruh badan request di memori sebelum mengirim — terukur file
+// 96 MB menaikkan RSS ±130 MB — sedangkan pipa node:http hanya ±20 MB. Karena itu jalur upload
+// provider memakai fungsi ini, bukan fetch/FormData.
+function kirimMultipart({ url, headers = {}, bagian }) {
+  const panjang = bagian.reduce((total, item) => total + (item.buffer ? item.buffer.length : item.size), 0);
+  const alamat = new URL(url);
+  const pemohon = alamat.protocol === 'https:' ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const permintaan = pemohon({ protocol: alamat.protocol, hostname: alamat.hostname, port: alamat.port, path: `${alamat.pathname}${alamat.search}`, method: 'POST', headers: { ...headers, 'content-length': String(panjang) } }, (respons) => {
+      let teks = '';
+      respons.setEncoding('utf8');
+      respons.on('data', (potongan) => { teks += potongan; });
+      respons.on('end', () => {
+        let body = null;
+        try { body = JSON.parse(teks); } catch {}
+        resolve({ ok: respons.statusCode >= 200 && respons.statusCode < 300, status: respons.statusCode, body });
+      });
+    });
+    permintaan.on('error', reject);
+    void (async () => {
+      try {
+        for (const item of bagian) {
+          for await (const potongan of item.buffer ? [item.buffer] : fs.createReadStream(item.path)) {
+            // backpressure: jangan menumpuk data di memori kalau soket lebih lambat dari disk.
+            if (!permintaan.write(potongan)) await once(permintaan, 'drain');
+          }
+        }
+        permintaan.end();
+      } catch (error) { permintaan.destroy(error); }
+    })();
+  });
+}
+
 async function uploadToTelegram(file, config, name, mimeType) {
-  const form = new FormData();
   const chatId = config.chatId || config.ownerId || process.env.TELEGRAM_CHAT_ID;
   if (!chatId) throw new Error('Telegram membutuhkan channel ID atau owner ID sebagai tujuan.');
-  const chatResponse = await fetch(`https://api.telegram.org/bot${config.botToken}/getChat?chat_id=${encodeURIComponent(chatId)}`);
+  const chatResponse = await fetch(`${TELEGRAM_API}/bot${config.botToken}/getChat?chat_id=${encodeURIComponent(chatId)}`);
   const chatResult = await chatResponse.json();
   if (!chatResponse.ok || !chatResult.ok) throw new Error(chatResult.description || 'Bot tidak bisa mengakses target Telegram. Untuk channel, jadikan bot admin; untuk owner ID, tekan Start pada bot.');
-  form.append('chat_id', chatId);
-  form.append('document', new Blob([fs.readFileSync(file.path)], { type: mimeType }), name);
-  const response = await fetch(`https://api.telegram.org/bot${config.botToken}/sendDocument`, { method: 'POST', body: form });
-  const result = await response.json();
-  if (!response.ok || !result.ok) throw new Error(result.description || `Telegram API ${response.status}. Pastikan bot sudah menjadi admin channel atau user sudah memulai chat.`);
+  // Berkas dikirim sebagai bagian multipart yang mengalir dari disk. Dua cara yang lebih mudah
+  // sudah dicoba dan keduanya memuat seluruh file ke RAM: `new Blob([fs.readFileSync(...)])` dan
+  // FormData + `fs.openAsBlob` lewat fetch (undici menahan seluruh badan request di memori —
+  // terukur: file 96 MB menaikkan RSS server ±130 MB, sedangkan node:http hanya ±20 MB).
+  const batas = `gutok${crypto.randomBytes(16).toString('hex')}`;
+  const respons = await kirimMultipart({
+    url: `${TELEGRAM_API}/bot${config.botToken}/sendDocument`,
+    headers: { 'content-type': `multipart/form-data; boundary=${batas}` },
+    bagian: [
+      { buffer: Buffer.from(`--${batas}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}\r\n--${batas}\r\nContent-Disposition: form-data; name="document"; filename="${name}"\r\nContent-Type: ${mimeType}\r\n\r\n`) },
+      { path: file.path, size: file.size },
+      { buffer: Buffer.from(`\r\n--${batas}--\r\n`) },
+    ],
+  });
+  const result = respons.body;
+  if (!respons.ok || !result?.ok) throw new Error(result?.description || `Telegram API ${respons.status}. Pastikan bot sudah menjadi admin channel atau user sudah memulai chat.`);
   // message_id disimpan supaya file benar-benar bisa dihapus dari channel nanti (bukan cuma disembunyikan dari dashboard)
   return { remoteFileId: `telegram:${chatId}:${result.result.message_id}:${result.result.document.file_id}`, size: file.size };
 }
 async function uploadToGoogleDrive(file, config, name, mimeType) {
   config = normalizeProviderConfig('gdrive', config);
   const accessToken = await getGoogleAccessToken(config);
-  const boundary = `gutok-${crypto.randomBytes(12).toString('hex')}`;
   const metadata = JSON.stringify({ name, mimeType, parents: [config.folderId] });
-  const content = fs.readFileSync(file.path);
-  const body = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`), content, Buffer.from(`\r\n--${boundary}--`)]);
-  const folderCheck = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(config.folderId)}?fields=id,name,mimeType,driveId,capabilities&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  // Folder diperiksa lebih dulu supaya kegagalan izin muncul sebagai pesan yang jelas, bukan
+  // setelah seluruh file terkirim.
+  const folderCheck = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(config.folderId)}?fields=id,name,mimeType,driveId,capabilities&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` } });
   const folderResult = await folderCheck.json();
   if (!folderCheck.ok || folderResult.mimeType !== 'application/vnd.google-apps.folder') throw new Error(folderResult.error?.message || 'Folder Google Drive tidak ditemukan atau belum dibagikan ke service account.');
   if (folderResult.capabilities?.canAddChildren === false) throw new Error('Service account hanya bisa membaca folder Google Drive. Beri akses Editor/Content manager pada folder atau Shared Drive.');
-  const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,size', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
-  const result = await response.json();
-  if (!response.ok || !result.id) throw new Error(result.error?.message || `Google Drive API ${response.status}. Service account memerlukan folder Shared Drive dengan akses Content manager.`);
+  // Metadata dan berkas dikirim dalam satu badan multipart yang mengalir dari disk, dengan
+  // Content-Length pasti (dihitung dari ukuran bagian). Lihat catatan di kirimMultipart: fetch()
+  // menahan seluruh badan di RAM, dan versi lama memakai readFileSync + Buffer.concat (2x ukuran
+  // file) sehingga upload 300 MB langsung memicu OOM di VPS 1 GB.
+  const batas = `gutok-${crypto.randomBytes(12).toString('hex')}`;
+  const respons = await kirimMultipart({
+    url: `${GOOGLE_API}/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,size`,
+    headers: { authorization: `Bearer ${accessToken}`, 'content-type': `multipart/related; boundary=${batas}` },
+    bagian: [
+      { buffer: Buffer.from(`--${batas}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${batas}\r\nContent-Type: ${mimeType}\r\n\r\n`) },
+      { path: file.path, size: file.size },
+      { buffer: Buffer.from(`\r\n--${batas}--`) },
+    ],
+  });
+  const result = respons.body;
+  if (!respons.ok || !result?.id) throw new Error(result?.error?.message || `Google Drive API ${respons.status}. Service account memerlukan folder Shared Drive dengan akses Content manager.`);
   return { remoteFileId: `gdrive:${result.id}`, size: Number(result.size || file.size) };
 }
+
 async function uploadToMega(file, config, name) {
   const { Storage } = await import('megajs');
   const storage = new Storage({ email: config.email, password: config.password });
@@ -263,7 +338,7 @@ async function deleteFromTelegram(remoteFileId, config) {
   // format lama: telegram:fileId — tidak menyimpan message_id, jadi tidak bisa dihapus dari channel via Bot API
   if (parts.length < 4) return { skipped: true, reason: 'Record lama tanpa message_id, hapus manual di Telegram jika perlu.' };
   const [, chatId, messageId] = parts;
-  const response = await fetch(`https://api.telegram.org/bot${config.botToken}/deleteMessage?chat_id=${encodeURIComponent(chatId)}&message_id=${encodeURIComponent(messageId)}`);
+  const response = await fetch(`${TELEGRAM_API}/bot${config.botToken}/deleteMessage?chat_id=${encodeURIComponent(chatId)}&message_id=${encodeURIComponent(messageId)}`);
   const result = await response.json();
   // "message to delete not found" berarti sudah terhapus sebelumnya — anggap sukses, bukan error
   if (!result.ok && !/message to delete not found/i.test(result.description || '')) throw new Error(result.description || `Gagal menghapus file di Telegram (HTTP ${response.status}).`);
@@ -272,7 +347,7 @@ async function deleteFromTelegram(remoteFileId, config) {
 async function deleteFromGoogleDrive(remoteFileId, config) {
   const fileId = remoteFileId.replace('gdrive:', '');
   const accessToken = await getGoogleAccessToken(config);
-  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`, { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } });
+  const response = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`, { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } });
   if (response.status === 404) return { skipped: false }; // sudah tidak ada, anggap sukses
   if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.error?.message || `Gagal menghapus file di Google Drive (HTTP ${response.status}).`); }
   return { skipped: false };
@@ -314,14 +389,14 @@ async function sendRemoteFile(res, file, provider, disposition = 'inline') {
   if (provider.kind === 'telegram') {
     const telegramParts = remoteFileId.split(':');
     const fileId = telegramParts.length >= 4 ? telegramParts[3] : telegramParts[1]; // format baru: telegram:chatId:messageId:fileId, lama: telegram:fileId
-    const info = await fetch(`https://api.telegram.org/bot${config.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`).then((result) => result.json());
+    const info = await fetch(`${TELEGRAM_API}/bot${config.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`).then((result) => result.json());
     if (!info.ok) throw new Error(info.description || 'Telegram file tidak ditemukan.');
-    const response = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${info.result.file_path}`);
+    const response = await fetch(`${TELEGRAM_FILE_API}/bot${config.botToken}/${info.result.file_path}`);
     if (!response.ok || !response.body) throw new Error(`Provider telegram mengembalikan HTTP ${response.status}.`);
     source = Readable.fromWeb(response.body);
   } else if (provider.kind === 'gdrive') {
     const fileId = remoteFileId.replace('gdrive:', '');
-    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${await getGoogleAccessToken(config)}` } });
+    const response = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${await getGoogleAccessToken(config)}` } });
     if (!response.ok || !response.body) throw new Error(`Provider gdrive mengembalikan HTTP ${response.status}.`);
     source = Readable.fromWeb(response.body);
   } else if (provider.kind === 'mega') {
@@ -355,7 +430,7 @@ async function sendRemoteFile(res, file, provider, disposition = 'inline') {
 async function verifyGoogleProvider(config) {
   config = normalizeProviderConfig('gdrive', config);
   const accessToken = await getGoogleAccessToken(config);
-  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(config.folderId)}?fields=id,name,mimeType,driveId,capabilities&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const response = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(config.folderId)}?fields=id,name,mimeType,driveId,capabilities&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` } });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error?.message || `Google Drive API ${response.status}`);
   if (result.mimeType !== 'application/vnd.google-apps.folder') throw new Error('Link tersebut bukan folder Google Drive.');
@@ -372,7 +447,13 @@ app.use((req, res, next) => {
   if (/\.(env|sqlite|sqlite3|db|pem|key|log)$/i.test(req.path) || /(^|\/)(server\.js|package-lock\.json|ecosystem\.config\.cjs)(\/|$)/i.test(req.path)) return res.status(404).end();
   return next();
 });
-app.use(express.static(path.join(root, 'assets')));
+// Aset belum ber-hash: cache browser dibatasi 5 menit dan index.html selalu divalidasi ulang,
+// supaya deploy berikutnya langsung terlihat. Cache panjang diserahkan ke Cloudflare/Nginx.
+app.use(express.static(path.join(root, 'assets'), {
+  maxAge: '5m',
+  setHeaders: (res, berkas) => { if (berkas.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); },
+}));
+
 
 function currentUser(req) {
   const token = req.headers.cookie?.match(/mydrive_session=([^;]+)/)?.[1];

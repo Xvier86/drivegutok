@@ -9,6 +9,12 @@ module.exports = {
     instances: 1,
     exec_mode: 'fork',
     autorestart: true,
+
+    // VPS-nya 1 GB. Heap dibatasi 384 MB supaya Node tidak menggelembung sampai memicu OOM
+    // killer (yang membunuh proses lain juga); max_memory_restart adalah jaring pengaman terakhir
+    // kalau RSS tetap naik karena kebocoran memori.
+    node_args: '--max-old-space-size=384',
+    max_memory_restart: '500M',
     env: {
       NODE_ENV: 'production',
       PORT: 3000,
