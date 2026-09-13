@@ -48,6 +48,14 @@ cek('PM2 punya batas heap (node_args + NODE_OPTIONS) + restart memori', /node_ar
 // Script deploy wajib memeriksa environ juga, bukan hanya cmdline.
 const deploy = `${fs.readFileSync(path.join(root, 'deploy.sh'), 'utf8')}${fs.readFileSync(path.join(root, 'redeploy.sh'), 'utf8')}`;
 cek('script deploy membaca /proc/<pid>/environ dan cmdline', /cmdline/.test(deploy) && /environ/.test(deploy) && /NODE_OPTIONS/.test(deploy));
+// Sumber bukti ketiga: PM2 sendiri tahu environment proses anaknya, jadi verifikasi tidak
+// bergantung pada /proc (yang bisa gagal dibaca) atau format spawn PM2 tertentu.
+cek('script deploy membaca NODE_OPTIONS lewat pm2 env juga', /pm2 env 0[^\n]*NODE_OPTIONS/.test(deploy));
+// Script deploy menulis ulang dirinya sendiri lewat `git pull`, dan bash membaca script per-offset:
+// tanpa salinan tetap, sisa script bisa tereksekusi dalam versi lama (pernah terjadi — peringatan
+// heap palsu). Dipisah per script supaya keduanya wajib punya.
+cek('deploy.sh jalan dari salinan tetap /tmp', deploy.includes('mktemp /tmp/deploy-') && deploy.includes('exec bash "$SALINAN_DEPLOY"'));
+cek('redeploy.sh jalan dari salinan tetap /tmp', deploy.includes('mktemp /tmp/redeploy-') && deploy.includes('exec bash "$SALINAN_REDEPLOY"'));
 cek('galat berulang dibatasi di log', /LOG_ULANG_MS/.test(sumber) && /function catatMasalah/.test(sumber));
 cek('kegagalan kuota provider tidak dicoba ulang tiap menit', /CAPACITY_ERROR_TTL_MS/.test(sumber));
 

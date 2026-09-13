@@ -2,6 +2,14 @@
 set -euo pipefail
 
 # Versi ringkas deploy.sh tanpa backup: untuk VPS yang projectnya di ~/drivegutok.
+# Alasannya sama dengan deploy.sh: `git pull` menulis ulang script ini saat berjalan, sedangkan bash
+# membaca script per-offset byte. Jalankan dari salinan tetap supaya isi tidak berubah di tengah.
+if [ -z "${SALINAN_REDEPLOY:-}" ]; then
+  SALINAN_REDEPLOY="$(mktemp /tmp/redeploy-XXXXXX.sh)"
+  cp "${BASH_SOURCE[0]}" "$SALINAN_REDEPLOY"
+  SALINAN_REDEPLOY="$SALINAN_REDEPLOY" exec bash "$SALINAN_REDEPLOY" "$@"
+fi
+
 APP_DIR="${APP_DIR:-$HOME/drivegutok}"
 BRANCH="${BRANCH:-main}"
 PORT="${PORT:-3000}"
@@ -57,12 +65,14 @@ else
   echo "!! Aplikasi belum merespons di port ${PORT}. Cek log di bawah."
 fi
 # Bukti flag heap benar-benar terpakai di proses yang berjalan, bukan hanya tersimpan di config PM2.
-# Sebagian versi PM2 menaruh `node_args` di command line, sebagian di NODE_OPTIONS: dua-duanya dicek.
+# Tiga sumber dicek: `pm2 env` (PM2 tahu environment proses anaknya), `/proc/<pid>/environ` (di VPS
+# ini PM2 menaruh flag di NODE_OPTIONS), dan command line (versi PM2 yang menyalin `node_args`).
+PM2_ENV=$(pm2 env 0 2>/dev/null | grep -m1 '^NODE_OPTIONS' || true)
 PROSES=$(pgrep -f "$APP_DIR/server.js" 2>/dev/null | head -1) || true
 CMDLINE=$(tr '\0' ' ' < "/proc/${PROSES:-0}/cmdline" 2>/dev/null || true)
 ENVIRON=$(tr '\0' '\n' < "/proc/${PROSES:-0}/environ" 2>/dev/null | grep '^NODE_OPTIONS=' || true)
-case "${CMDLINE}${ENVIRON}" in
-  *max-old-space-size*) echo ">> Flag heap terpakai: ${CMDLINE}${ENVIRON}" ;;
+case "${CMDLINE}${ENVIRON}${PM2_ENV}" in
+  *max-old-space-size*) echo ">> Flag heap terpakai: ${PM2_ENV:-${CMDLINE}${ENVIRON}}" ;;
   *) echo "!! Proses berjalan tanpa flag heap dari ecosystem.config.cjs: ${CMDLINE:-tidak terbaca}" ;;
 esac
 

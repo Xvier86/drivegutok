@@ -2,10 +2,20 @@
 set -euo pipefail
 
 # Deploy normal di VPS: backup -> hentikan PM2 -> tarik kode -> npm ci -> start -> health check.
+# `git pull` di dalam script ini menulis ulang deploy.sh saat script sedang berjalan, sedangkan bash
+# membaca script per-offset byte: sisa script bisa tereksekusi dalam versi lama (pernah terjadi —
+# peringatan heap palsu di deploy yang sama). Karena itu script menjalankan dirinya dari salinan
+# tetap di /tmp, sehingga isi yang dieksekusi tidak berubah sampai selesai.
+if [ -z "${SALINAN_DEPLOY:-}" ]; then
+  SALINAN_DEPLOY="$(mktemp /tmp/deploy-XXXXXX.sh)"
+  cp "${BASH_SOURCE[0]}" "$SALINAN_DEPLOY"
+  SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" SALINAN_DEPLOY="$SALINAN_DEPLOY" exec bash "$SALINAN_DEPLOY" "$@"
+fi
+
 APP_DIR="${APP_DIR:-/var/www/gutok-drive}"
 BRANCH="${BRANCH:-main}"
 PORT="${PORT:-3000}"
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF_DIR="${SELF_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 BACKUP=""
 APP_DIHENTIKAN=0
 
@@ -92,12 +102,14 @@ else
 fi
 
 # Bukti flag heap benar-benar terpakai di proses yang berjalan, bukan hanya tersimpan di config PM2.
-# Sebagian versi PM2 menaruh `node_args` di command line, sebagian di NODE_OPTIONS: dua-duanya dicek.
+# Tiga sumber dicek: `pm2 env` (PM2 tahu environment proses anaknya), `/proc/<pid>/environ` (di VPS
+# ini PM2 menaruh flag di NODE_OPTIONS), dan command line (versi PM2 yang menyalin `node_args`).
+PM2_ENV=$(pm2 env 0 2>/dev/null | grep -m1 '^NODE_OPTIONS' || true)
 PROSES=$(pgrep -f "$APP_DIR/server.js" 2>/dev/null | head -1) || true
 CMDLINE=$(tr '\0' ' ' < "/proc/${PROSES:-0}/cmdline" 2>/dev/null || true)
 ENVIRON=$(tr '\0' '\n' < "/proc/${PROSES:-0}/environ" 2>/dev/null | grep '^NODE_OPTIONS=' || true)
-case "${CMDLINE}${ENVIRON}" in
-  *max-old-space-size*) echo ">> Flag heap terpakai: ${CMDLINE}${ENVIRON}" ;;
+case "${CMDLINE}${ENVIRON}${PM2_ENV}" in
+  *max-old-space-size*) echo ">> Flag heap terpakai: ${PM2_ENV:-${CMDLINE}${ENVIRON}}" ;;
   *) echo "!! Proses berjalan tanpa flag heap dari ecosystem.config.cjs: ${CMDLINE:-tidak terbaca}" ;;
 esac
 
