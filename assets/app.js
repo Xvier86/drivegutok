@@ -14,7 +14,11 @@ rute.trash = renderTrash;
 rute.akun = renderAkun;
 rute.login = renderLogin;
 
-export async function start() { hideLoading(); try { const me = await api('/api/me'); state.user = me.user; await ke('dashboard'); } catch (error) { hideLoading(); await ke('login', error.message === 'Unauthorized' ? '' : error.message); } finally { hideLoading(); } }
+// Google mengembalikan browser ke /?google=ok setelah Owner menyambungkan akun Drive-nya. Kueri itu
+// dibaca sekali lalu dibersihkan, supaya muat ulang berikutnya tidak menampilkan notifikasi yang
+// sama. location hanya dibaca kalau benar-benar string — di uji DOM tiruan location adalah Proxy.
+const hasilGoogle = () => { if (typeof location?.search !== 'string') return ''; const cocok = /[?&]google=([^&]*)/.exec(location.search); if (!cocok) return ''; history.replaceState(null, '', location.pathname); return decodeURIComponent(cocok[1]); };
+export async function start() { hideLoading(); try { const me = await api('/api/me'); state.user = me.user; const google = hasilGoogle(); if (google) { await ke('admin'); notify(google === 'ok' ? 'Akun Google tersambung. Tekan Aktifkan kalau providernya belum menyala.' : `Login Google gagal: ${google}`); return; } await ke('dashboard'); } catch (error) { hideLoading(); await ke('login', error.message === 'Unauthorized' ? '' : error.message); } finally { hideLoading(); } }
 
 document.addEventListener('submit', (event) => { if (event.target.id === 'setup-form') showLoading('Menyiapkan workspace...'); if (event.target.id === 'login-form') showLoading('Memeriksa kredensial...'); });
 // Keluar dan chip akun ditangani sekali di sini (delegasi), bukan per layar: keduanya ada di sidebar

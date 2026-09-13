@@ -135,5 +135,17 @@ cek('kedua endpoint akun memeriksa password saat ini', (sumberServer.match(/pass
 cek('akun.js memakai endpoint email dan password', /'\/api\/account\/email', \{ method: 'PATCH'/.test(sumberAkun) && /'\/api\/account\/password', \{ method: 'PATCH'/.test(sumberAkun));
 cek('akun.js menjelaskan status verifikasi dari balasan server', /data\.verificationRequired/.test(sumberAkun));
 
+
+// 12) Login akun Google (OAuth) untuk provider Google Drive. Tiga penjaga: tombol konfigurasi harus
+// membawa cara akses yang tersimpan (kalau tidak, modal selalu terbuka di mode service account dan
+// satu kali Simpan menimpa akun Google yang sudah tersambung), server harus punya rute login dan
+// callback-nya, dan callback tidak boleh mengandalkan cookie sesi — browser kembali dari
+// accounts.google.com, jadi hanya state acak yang mengikatnya ke provider yang benar.
+cek('baris provider mengirim authMode ke tombol konfigurasi', /data-auth="\$\{esc\(provider\.authMode/.test(sumberAdmin));
+cek('modal konfigurasi menerima authMode tersimpan', /openProviderConfigModal\(button\.dataset\.provider, button\.dataset\.kind, button\.dataset\.auth\)/.test(sumberAdmin));
+cek('modal Google punya pemilih cara akses dan tombol login', /id="gdrive-auth"/.test(sumberAdmin) && /id="google-login"/.test(sumberAdmin) && /#gdrive-oauth/.test(sumberAdmin));
+cek('server.js punya rute login dan callback Google', /app\.get\('\/api\/admin\/providers\/:id\/google\/login'/.test(sumberServer) && /app\.get\('\/api\/admin\/providers\/:id\/google\/callback'/.test(sumberServer));
+cek('callback Google memakai state acak, bukan cookie sesi', /googleLoginStates\.get\(state\)/.test(sumberServer) && /sesi\.providerId !== req\.params\.id/.test(sumberServer));
+cek('access token OAuth dibuat dari refresh token', /grant_type: 'refresh_token'/.test(sumberServer) && /prompt', 'consent'/.test(sumberServer));
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

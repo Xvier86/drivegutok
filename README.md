@@ -30,14 +30,14 @@ Script `*.sh` sengaja tetap di akar repo karena alur VPS memanggilnya dengan nam
 
 ```bash
 npm run check                  # sintaks semua berkas + uji cepat
-npm run uji                    # lingkup modul, batas waktu upload, render tiap layar, gaya CSS, ikatan handler, rapikan VPS
+npm run uji                    # lingkup modul, batas waktu upload, render tiap layar, gaya CSS, ikatan handler, provider Google OAuth, rapikan VPS
 npm run uji:berat              # cleanup.js, server lambat, dan pemakaian RAM saat upload besar
 bash uji/skrip-deploy.sh .     # latihan deploy di VPS palsu (pm2/npm/curl diganti stub)
 npm run uji:mega               # jalur galat login Mega (perlu akses API Mega, dilewati bila diblokir)
 ```
 
 Uji di `uji/` yang berjalan ke proses server sungguhan menyalin `server.js` ke folder sementara
-(provider diarahkan ke server tiruan lokal lewat `TELEGRAM_API_BASE` / `GOOGLE_API_BASE`), jadi
+(provider diarahkan ke server tiruan lokal lewat `TELEGRAM_API_BASE` / `GOOGLE_API_BASE` / `GOOGLE_AUTH_BASE`), jadi
 tidak ada file uji yang dikirim ke provider asli.
 
 Semua uji di `uji/` boleh dijalankan dari folder mana pun dan tidak menyentuh `data/` maupun `storage/` produksi.
@@ -121,6 +121,7 @@ openssl rand -base64 48
 `UPLOAD_IDLE_TIMEOUT_MS` (default 95000) adalah batas waktu **diamnya soket** saat mengirim berkas ke provider: kalau Telegram sudah menerima seluruh berkas lalu berhenti menjawab, permintaan dijawab `502` dengan pesan yang jelas alih-alih menggantung sampai Cloudflare memutusnya di 100 detik (`524`) tanpa baris database dan tanpa catatan log. Nilai defaultnya 95 detik karena lama jawaban Telegram tumbuh seiring ukuran berkas (terukur di VPS: 3 MB selesai di detik ke-35, 5 MB baru di detik ke-60) — batas 60 detik membuang unggahan yang sebenarnya berhasil di detik ke-61..95 sambil meninggalkan berkas yatim di channel. Jangan naikkan melewati 100000: di atas itu Cloudflare sudah lebih dulu memutus klien, dan pesannya berubah jadi halaman `524`. Batas ini hanya berlaku untuk soket yang diam; unggahan besar yang datanya terus mengalir tidak terpengaruh. Batas Nginx (`proxy_read_timeout`, lihat `vps-nginx.sh`) harus lebih longgar dari nilai ini supaya yang menjawab galat adalah aplikasi, bukan proxy.
 Semua variabel di atas sudah tersedia di `.env.example`. `setup.sh` menyalinnya menjadi `.env` dan mengisi `STORAGE_CONFIG_KEY` otomatis dengan hasil `openssl rand -base64 48`; `ecosystem.config.cjs` ikut disuntik nilai yang sama supaya PM2 memakai secret yang identik.
 `PROVIDER_MEGA_TIMEOUT_MS` (default 30000) adalah batas waktu login Mega saat kuotanya dibaca. Mega memasang tantangan proof-of-work (header `X-Hashcash`) di depan login dan megajs menghitung tokennya di CPU — terukur ±5 detik di mesin uji dan lebih lama di VPS 1 core, sehingga batas 8 detik milik provider lain membuat akun yang sehat tampil `Mega tidak merespons dalam 8 detik`. Pembacaan kuota berjalan di latar belakang, jadi batas longgar tidak menahan halaman.
+`PUBLIC_BASE_URL` (opsional, tanpa garis miring di akhir) adalah alamat publik situs ini, mis. `https://drive.contoh.com`. Dipakai untuk menyusun **redirect URI** login akun Google. Di balik reverse proxy (Nginx/Cloudflare) permintaan sampai ke Node sebagai `http://`, sehingga tanpa variabel ini redirect URI yang dikirim ke Google berbunyi `http://...` padahal publiknya `https://...` — dan Google menolaknya karena tidak sama dengan yang didaftarkan. Kalau situs diakses langsung tanpa proxy, variabel ini tidak perlu diisi.
 
 Jangan menaruh token Telegram, password Mega, private key Google, atau API key di Git. Credential provider dimasukkan melalui panel Owner dan disimpan terenkripsi di SQLite.
 
@@ -265,18 +266,32 @@ Semua beban berat (TLS, kompresi, cache, hooking file besar) sengaja di luar Nod
 
 ## 8. Setup Provider melalui Dashboard
 
-Login sebagai Owner, buka `Owner control`, lalu konfigurasi provider. Widget **Penyimpanan** di sidebar dashboard menampilkan akumulasi pemakaian semua provider (satu angka terpakai, kapasitas total, dan meter tersegmentasi — tanpa rincian per provider), jadi kuota provider terlihat tanpa membuka `Owner control`. Angka di kedua tempat berasal dari sumber yang sama: `/api/dashboard` dan `/api/admin/overview` sama-sama memakai nilai tersimpan lalu menyegarkan kuota asli di latar belakang (kegagalan disimpan sementara, jadi provider yang diblokir tidak dipanggil ulang setiap menit).
+Login sebagai Owner, buka `Owner control`, lalu konfigurasi provider. Tidak ada provider bawaan: daftar storage kosong sampai Owner menambahkannya sendiri, dan provider baru muncul di pilihan upload setelah dinyatakan **Aktif** (unggahan ditolak `409 Belum ada provider remote yang aktif dan terkonfigurasi.` selama belum ada). Widget **Penyimpanan** di sidebar dashboard menampilkan akumulasi pemakaian semua provider (satu angka terpakai, kapasitas total, dan meter tersegmentasi — tanpa rincian per provider), jadi kuota provider terlihat tanpa membuka `Owner control`. Angka di kedua tempat berasal dari sumber yang sama: `/api/dashboard` dan `/api/admin/overview` sama-sama memakai nilai tersimpan lalu menyegarkan kuota asli di latar belakang (kegagalan disimpan sementara, jadi provider yang diblokir tidak dipanggil ulang setiap menit).
 
 ### Google Drive
+
+Kolom **Cara akses** menentukan bagaimana server memakai akun Google — pilih salah satu:
+
+**A. Service account (JSON)** — untuk folder Shared Drive milik organisasi:
 
 1. Buat service account di Google Cloud.
 2. Aktifkan Google Drive API.
 3. Buat Shared Drive dan folder tujuan.
 4. Tambahkan `client_email` service account sebagai `Content manager`.
-5. Tempel JSON service account dan URL atau ID folder pada panel.
+5. Tempel JSON service account, lalu URL atau ID folder pada panel.
 6. Aktifkan provider setelah verifikasi akses berhasil.
 
-Server membuat OAuth access token otomatis dari JSON service account. API key Google `AIza...` tidak digunakan untuk upload.
+**B. Login akun Google (OAuth)** — memakai akun Google Owner sendiri, termasuk kuota pribadinya:
+
+1. Buat OAuth client ID tipe **Web application** di Google Cloud (aktifkan Google Drive API).
+2. Daftarkan redirect URI yang ditampilkan di modal konfigurasi — bentuknya `<alamat-situs>/api/admin/providers/<id-provider>/google/callback`. Salin apa adanya; Google menolak URI yang tidak identik. Di balik reverse proxy isi `PUBLIC_BASE_URL` supaya alamatnya `https://`, bukan `http://`.
+3. Isi Client ID dan Client secret, tempel URL/ID folder, lalu tekan **Login dengan Google** dan setujui di halaman Google.
+4. Refresh token tersimpan terenkripsi di SQLite; server menukarnya jadi access token setiap kali mengunggah atau membaca kuota — tanpa kunci privat dan tanpa JWT. Cabut akses kapan saja di `myaccount.google.com/permissions` (provider langsung merah dengan pesan dari Google).
+5. Aktifkan provider.
+
+Folder harus bisa ditulis oleh akun yang dipakai: buat foldernya dengan akun itu sendiri, atau beri akun OAuth itu akses Editor ke folder/Shared Drive yang ada. Kolom rahasia yang dikosongkan saat menyimpan konfigurasi berarti "biarkan seperti semula", jadi refresh token tidak hilang kalau hanya folder ID yang diubah.
+
+Kedua cara memakai API Drive yang sama dan API key Google `AIza...` tidak digunakan untuk upload.
 
 ### Telegram
 

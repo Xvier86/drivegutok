@@ -66,9 +66,6 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS shares (token TEXT PRIMARY KEY, file_id TEXT, folder_id TEXT, password_hash TEXT, expires_at TEXT, created_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(owner_id, parent_id);
   CREATE INDEX IF NOT EXISTS idx_files_folder ON files(owner_id, folder_id);
-  INSERT OR IGNORE INTO providers (id, name, kind, enabled, used_bytes, capacity_bytes) VALUES ('telegram', 'Telegram Channel', 'telegram', 0, 0, 214748364800);
-  INSERT OR IGNORE INTO providers (id, name, kind, enabled, used_bytes, capacity_bytes) VALUES ('mega', 'Mega Drive', 'mega', 0, 0, 2147483648000);
-  INSERT OR IGNORE INTO providers (id, name, kind, enabled, used_bytes, capacity_bytes) VALUES ('gdrive', 'Google Drive', 'gdrive', 0, 0, 1610612736000);
 `);
 for (const statement of [
   "ALTER TABLE files ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0",
@@ -77,7 +74,11 @@ for (const statement of [
   "ALTER TABLE files ADD COLUMN expires_at TEXT"
 ]) { try { db.exec(statement); } catch (error) { if (!error.message.includes('duplicate column name')) throw error; } }
 try { db.exec("ALTER TABLE providers ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'"); } catch (error) { if (!error.message.includes('duplicate column name')) throw error; }
-db.prepare("UPDATE providers SET enabled = 0 WHERE kind = 'local'").run();
+// Provider tidak lagi disemai otomatis: daftar storage hanya berisi provider yang benar-benar
+// ditambahkan Owner di halaman Kendali workspace. Baris bawaan versi lama ("Telegram Channel",
+// "Mega Drive", "Google Drive") dibuang sekali di sini — tapi hanya yang belum pernah disentuh:
+// provider yang sudah diaktifkan, punya konfigurasi, atau menyimpan berkas TIDAK dihapus.
+db.prepare("DELETE FROM providers WHERE id IN ('telegram', 'mega', 'gdrive') AND enabled = 0 AND used_bytes = 0 AND COALESCE(config_json, '') IN ('', '{}') AND NOT EXISTS (SELECT 1 FROM files WHERE files.provider = providers.id)").run();
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -103,6 +104,11 @@ const TELEGRAM_FILE_API = `${TELEGRAM_API}/file`;
 // Google Drive API juga bisa diarahkan ke server tiruan saat uji (uji/ram.mjs) supaya jalur upload
 // bisa diukur tanpa mengirim file besar ke internet.
 const GOOGLE_API = (process.env.GOOGLE_API_BASE || 'https://www.googleapis.com').replace(/\/+$/, '');
+// Halaman persetujuan OAuth 2.0 Google (login akun Google langsung). Endpoint token-nya menumpang
+// GOOGLE_API karena www.googleapis.com/oauth2/v3/token adalah alias resmi dari
+// oauth2.googleapis.com/token — jadi server Google tiruan di uji otomatis ikut melayani penukaran
+// kode otorisasi dan refresh token.
+const GOOGLE_AUTH_BASE = (process.env.GOOGLE_AUTH_BASE || 'https://accounts.google.com').replace(/\/+$/, '');
 
 const configKey = crypto.createHash('sha256').update(process.env.STORAGE_CONFIG_KEY || 'change-this-storage-config-key').digest();
 function encryptConfig(config) {
@@ -125,7 +131,15 @@ function normalizeGoogleFolderId(value) {
 }
 function normalizeProviderConfig(kind, config) {
   const normalized = { ...(config || {}) };
-  if (kind === 'gdrive') normalized.folderId = normalizeGoogleFolderId(normalized.folderId);
+  if (kind === 'gdrive') {
+    normalized.folderId = normalizeGoogleFolderId(normalized.folderId);
+    // Dua cara akses yang saling meniadakan: service account (JSON) atau login akun Google (OAuth:
+    // client ID + client secret + refresh token). Kredensial cara yang tidak dipakai dibuang supaya
+    // tidak ada rahasia lama yang tertinggal di database setelah Owner berpindah cara akses.
+    normalized.authMode = normalized.authMode === 'oauth' ? 'oauth' : 'service';
+    if (normalized.authMode === 'oauth') delete normalized.serviceAccountJson;
+    else { delete normalized.clientId; delete normalized.clientSecret; delete normalized.refreshToken; }
+  }
   return normalized;
 }
 function retentionExpiry(type, value) {
@@ -149,12 +163,21 @@ function providerStatus(provider) {
   try { config = decryptConfig(provider.config_json); } catch {}
   const missing = (providerRequirements[provider.kind] || []).filter((key) => !config[key]);
   if (provider.kind === 'gdrive') {
-    let account = null;
-    try { account = typeof config.serviceAccountJson === 'string' ? JSON.parse(config.serviceAccountJson) : config.serviceAccountJson; } catch {}
-    if (!account?.client_email || !account?.private_key || !account?.token_uri) missing.push('serviceAccountJson');
+    // Hanya cara akses yang dipakai yang diperiksa: provider OAuth tidak butuh service account dan
+    // sebaliknya. Kalau keduanya dihitung, provider yang sehat selalu tampil "Belum siap".
+    if (config.authMode === 'oauth') {
+      for (const key of ['clientId', 'clientSecret', 'refreshToken']) if (!config[key]) missing.push(key);
+    } else {
+      let account = null;
+      try { account = typeof config.serviceAccountJson === 'string' ? JSON.parse(config.serviceAccountJson) : config.serviceAccountJson; } catch {}
+      if (!account?.client_email || !account?.private_key || !account?.token_uri) missing.push('serviceAccountJson');
+    }
   }
   const { config_json: _config, ...safeProvider } = provider;
-  return { ...safeProvider, configured: missing.length === 0, missing };
+  // authMode bukan rahasia dan ikut dikirim ke UI supaya tombol "Ubah konfigurasi" membuka modal pada
+  // cara akses yang benar. Tanpa itu modal Google Drive selalu terbuka di mode service account, dan
+  // satu kali Simpan cukup untuk menimpa akun Google yang sudah tersambung.
+  return { ...safeProvider, authMode: provider.kind === 'gdrive' ? (config.authMode === 'oauth' ? 'oauth' : 'service') : null, configured: missing.length === 0, missing };
 }
 // Provider yang lambat atau akunnya diblokir tidak boleh membuat dashboard Owner control
 // menggantung: /api/admin/overview memakai Promise.all, jadi satu provider yang tidak pernah
@@ -214,7 +237,21 @@ async function readProviderCapacity(provider) {
   return { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'manual' };
 }
 function base64Url(value) { return Buffer.from(value).toString('base64url'); }
+// Penukaran token Google dipakai dua jalur: refresh token (setiap kali API dipanggil) dan kode
+// otorisasi (sekali saat Owner menekan "Login dengan Google").
+async function googleTokenRequest(parameters) {
+  const response = await fetch(`${GOOGLE_API}/oauth2/v3/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(parameters) });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.access_token) throw new Error(result.error_description || result.error || `Google token API ${response.status}`);
+  return result;
+}
 async function getGoogleAccessToken(config) {
+  // Login akun Google langsung: access token dibuat dari refresh token milik Owner, jadi tidak ada
+  // kunci privat, tidak ada JWT, dan tidak perlu service account sama sekali.
+  if (config.authMode === 'oauth' || config.refreshToken) {
+    const token = await googleTokenRequest({ client_id: config.clientId, client_secret: config.clientSecret, refresh_token: config.refreshToken, grant_type: 'refresh_token' });
+    return token.access_token;
+  }
   let account;
   try { account = typeof config.serviceAccountJson === 'string' ? JSON.parse(config.serviceAccountJson) : config.serviceAccountJson; } catch { throw new Error('serviceAccountJson Google tidak valid.'); }
   if (!account?.client_email || !account?.private_key || !account?.token_uri) throw new Error('Service account Google belum lengkap.');
@@ -1039,7 +1076,15 @@ app.patch('/api/admin/providers/:id', requireUser, ownerOnly, async (req, res) =
   const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
   if (!provider) return json(res, { error: 'Provider tidak ditemukan.' }, 404);
   if (req.body.config && typeof req.body.config === 'object') {
-    const config = normalizeProviderConfig(provider.kind, req.body.config);
+    // Kolom yang dikirim kosong berarti "biarkan seperti semula", sisanya digabung ke konfigurasi
+    // yang tersimpan. Sebelumnya PATCH MENGGANTI seluruh konfigurasi, jadi modal yang tidak memuat
+    // semua kolom — dan refresh token Google memang tidak pernah bisa ditampilkan ulang — menghapus
+    // kredensial lama tanpa peringatan.
+    const kosong = (nilai) => String(nilai ?? '').trim() === '';
+    const masuk = Object.fromEntries(Object.entries(req.body.config).filter(([, nilai]) => !kosong(nilai)));
+    let tersimpan = {};
+    try { tersimpan = decryptConfig(provider.config_json); } catch { tersimpan = {}; }
+    const config = normalizeProviderConfig(provider.kind, { ...tersimpan, ...masuk });
     db.prepare('UPDATE providers SET config_json = ? WHERE id = ?').run(encryptConfig(config), provider.id);
     provider.config_json = encryptConfig(config);
   }
@@ -1059,5 +1104,64 @@ app.patch('/api/admin/providers/:id', requireUser, ownerOnly, async (req, res) =
   return json(res, { ok: true });
 });
 
+// Login akun Google (OAuth 2.0) untuk provider Google Drive. State login disimpan di memori proses:
+// satu server, satu percobaan login pending, kedaluwarsa 10 menit. Callback TIDAK memakai cookie
+// sesi — browser kembali dari accounts.google.com, dan state acak inilah yang mengikat callback ke
+// provider serta Owner yang memulainya.
+const googleLoginStates = new Map();
+const GOOGLE_LOGIN_TTL_MS = 10 * 60 * 1000;
+const escapeHtml = (nilai) => String(nilai).replace(/[&<>"']/g, (huruf) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[huruf]));
+// Redirect URI harus SAMA PERSIS dengan yang didaftarkan di Google Cloud Console. Di balik reverse
+// proxy (nginx/Cloudflare) req.protocol masih 'http', jadi sediakan PUBLIC_BASE_URL untuk
+// menimpanya, mis. PUBLIC_BASE_URL=https://drive.contoh.com.
+function googleRedirectUri(req, providerId) {
+  const dasar = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+  return `${dasar}/api/admin/providers/${providerId}/google/callback`;
+}
+function halamanGoogle(res, pesan, status) {
+  return res.status(status).type('html').send(`<!doctype html><meta charset="utf-8"><title>Login Google</title><p>${escapeHtml(pesan)}</p><p><a href="/">Kembali ke Gutok Drive</a></p>`);
+}
+app.get('/api/admin/providers/:id/google/login', requireUser, ownerOnly, (req, res) => {
+  const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
+  if (!provider || provider.kind !== 'gdrive') return json(res, { error: 'Provider Google Drive tidak ditemukan.' }, 404);
+  let config = {};
+  try { config = normalizeProviderConfig('gdrive', decryptConfig(provider.config_json)); } catch { return json(res, { error: 'Konfigurasi provider tidak dapat dibaca.' }, 409); }
+  if (!config.clientId || !config.clientSecret) return json(res, { error: 'Isi Client ID dan Client secret Google lebih dulu, lalu simpan konfigurasi.' }, 409);
+  for (const [kunci, nilai] of googleLoginStates) if (nilai.expiresAt < Date.now()) googleLoginStates.delete(kunci);
+  const state = crypto.randomBytes(16).toString('base64url');
+  googleLoginStates.set(state, { providerId: provider.id, actorId: req.user.id, expiresAt: Date.now() + GOOGLE_LOGIN_TTL_MS });
+  const izin = new URL(`${GOOGLE_AUTH_BASE}/o/oauth2/v2/auth`);
+  izin.searchParams.set('client_id', config.clientId);
+  izin.searchParams.set('redirect_uri', googleRedirectUri(req, provider.id));
+  izin.searchParams.set('response_type', 'code');
+  izin.searchParams.set('scope', 'https://www.googleapis.com/auth/drive');
+  // offline + prompt=consent: tanpa prompt, Google hanya mengirim refresh token pada persetujuan
+  // pertama, sehingga menyambung ulang setelah token dicabut "berhasil" tanpa refresh token.
+  izin.searchParams.set('access_type', 'offline');
+  izin.searchParams.set('prompt', 'consent');
+  izin.searchParams.set('state', state);
+  return res.redirect(izin.toString());
+});
+app.get('/api/admin/providers/:id/google/callback', async (req, res) => {
+  const state = String(req.query.state || '');
+  const sesi = googleLoginStates.get(state);
+  googleLoginStates.delete(state);
+  if (!sesi || sesi.expiresAt < Date.now() || sesi.providerId !== req.params.id) return halamanGoogle(res, 'Login Google tidak dikenal atau sudah kedaluwarsa. Ulangi dari halaman Kendali workspace.', 400);
+  if (req.query.error) return halamanGoogle(res, `Google menolak permintaan: ${req.query.error}`, 400);
+  const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
+  if (!provider) return halamanGoogle(res, 'Provider Google Drive tidak ditemukan.', 404);
+  try {
+    if (!req.query.code) throw new Error('Google tidak mengirim kode otorisasi.');
+    const config = normalizeProviderConfig('gdrive', decryptConfig(provider.config_json));
+    const token = await googleTokenRequest({ client_id: config.clientId, client_secret: config.clientSecret, code: String(req.query.code), grant_type: 'authorization_code', redirect_uri: googleRedirectUri(req, provider.id) });
+    if (!token.refresh_token) throw new Error('Google tidak mengirim refresh token. Cabut akses lama di myaccount.google.com/permissions lalu sambungkan ulang.');
+    db.prepare('UPDATE providers SET config_json = ? WHERE id = ?').run(encryptConfig({ ...config, refreshToken: token.refresh_token }), provider.id);
+    audit(sesi.actorId, 'google_login', 'provider', provider.id);
+  } catch (error) {
+    console.error(`[gdrive oauth] login gagal: ${error.message}`);
+    return halamanGoogle(res, `Login gagal: ${error.message}`, 502);
+  }
+  return res.redirect('/?google=ok');
+});
 app.get('/*splat', (req, res) => { if (req.path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404); return res.sendFile(path.join(root, 'assets', 'index.html')); });
 app.listen(port, () => console.log(`MyDrive berjalan di http://127.0.0.1:${port}`));

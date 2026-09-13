@@ -13,7 +13,7 @@ const app = new Proxy({}, { get: (_t, kunci) => (kunci === 'innerHTML' ? layar :
 globalThis.document = new Proxy(el, { get: (_t, kunci) => (kunci === 'querySelector' ? (pemilih) => (pemilih === '#app' ? app : el) : el) });
 process.on('unhandledRejection', () => {});
 
-const provider = { id: 'p1', name: 'Google Drive', kind: 'gdrive', enabled: 1, used_bytes: 1024, capacity_bytes: 2048, configured: true, missing: [] };
+const provider = { id: 'p1', name: 'Google Drive', kind: 'gdrive', enabled: 1, used_bytes: 1024, capacity_bytes: 2048, authMode: 'service', configured: true, missing: [] };
 // Provider Telegram: Bot API tidak punya endpoint kuota, jadi yang dipakai adalah kapasitas manual
 // yang diisi Owner (1 MB) plus byte terkirim — bukan "kuota tak dilaporkan" milik provider manual.
 const providerTelegram = { id: 'p2', name: 'Telegram Channel', kind: 'telegram', enabled: 1, used_bytes: 4096, capacity_bytes: 1048576, capacitySource: 'telegram', capacityError: null, configured: true, missing: [] };
@@ -57,7 +57,7 @@ Object.assign(rute, { dashboard: files.renderDashboard, admin: admin.renderAdmin
 // tersegmentasi, bukan baris provider.
 const WAJIB = {
   renderDashboard: ['storage-card', 'storage-head', 'storage-label', 'Penyimpanan', 'storage-isi', 'data-bytes', 'storage-dari', 'storage-total', 'storage-pct', 'storage-meter', 'segmen', '--i:', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn', 'class="fab"', 'upload-trigger'],
-  renderAdmin: ['provider-list', 'member-list', 'member-row', 'member-access', 'data-member', 'badge', 'ghost', 'timeline', 'tl-hari', 'tl-item', 'tl-titik', 'tl-jam', 'terkirim ke Telegram'],
+  renderAdmin: ['provider-list', 'member-list', 'member-row', 'member-access', 'data-member', 'badge', 'ghost', 'timeline', 'tl-hari', 'tl-item', 'tl-titik', 'tl-jam', 'terkirim ke Telegram', 'data-auth="service"'],
   // Pengaturan akun: dua formulir, masing-masing dengan kolom password saat ini (tanpa itu halaman ini
   // hanya jadi teater — servernya sendiri yang menjaga, lihat uji/akun.mjs).
   renderAkun: ['form-akun-email', 'form-akun-sandi', 'akun-forms', 'akun-view', 'Pengaturan akun', 'name="currentPassword"', 'name="newPassword"', 'name="confirmPassword"', 'minlength="8"', 'vier@contoh.invalid'],
