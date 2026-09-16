@@ -5,7 +5,11 @@ export { icon };
 export const app = document.querySelector('#app');
 export const toast = document.querySelector('#toast');
 export const esc = (value = '') => String(value).replace(/[&<>"']/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' }[char]));
-export const formatBytes = (bytes = 0) => bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+export const formatBytes = (bytes = 0) => {
+  const value = Math.max(0, Number(bytes) || 0);
+  const unit = Math.min(4, Math.floor(Math.log2(Math.max(1, value)) / 10));
+  return `${(value / 1024 ** unit).toFixed(unit < 2 ? 0 : 1)} ${['B', 'KB', 'MB', 'GB', 'TB'][unit]}`;
+};
 export const notify = (message) => { toast.textContent = message; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2600); };
 export function showLoading(message = 'Memproses...') { if (document.querySelector('#loading-overlay')) return; document.body.insertAdjacentHTML('beforeend', `<div class="loading-overlay" id="loading-overlay"><div class="loading-card"><span class="loading-spinner"></span><strong>${esc(message)}</strong><span class="loading-dots">Mohon tunggu</span></div></div>`); }
 export function hideLoading() { document.querySelector('#loading-overlay')?.remove(); }

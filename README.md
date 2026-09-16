@@ -33,6 +33,7 @@ npm run check                  # sintaks semua berkas + uji cepat
 npm run uji                    # lingkup modul, batas waktu upload, render tiap layar, gaya CSS, ikatan handler, provider Google OAuth, rapikan VPS
 npm run uji:berat              # cleanup.js, server lambat, dan pemakaian RAM saat upload besar
 bash uji/skrip-deploy.sh .     # latihan deploy di VPS palsu (pm2/npm/curl diganti stub)
+python3 uji/nginx-backup.py    # backup Nginx di luar include, rollback, gzip (stub lokal)
 npm run uji:mega               # jalur galat login Mega (perlu akses API Mega, dilewati bila diblokir)
 ```
 
@@ -41,6 +42,10 @@ Uji di `uji/` yang berjalan ke proses server sungguhan menyalin `server.js` ke f
 tidak ada file uji yang dikirim ke provider asli.
 
 Semua uji di `uji/` boleh dijalankan dari folder mana pun dan tidak menyentuh `data/` maupun `storage/` produksi.
+
+`npm run check` juga mencakup regresi keamanan, UI, dan pemilihan provider. Untuk browser: jalankan `node uji/browser-fixture.mjs`, lalu eksekusi `uji/browser-check.py` melalui browser-use dengan `DRIVEGUTOK_FIXTURE` menunjuk `session.json` yang dicetak fixture. Skrip Python memerlukan helper browser-use; bukan program Python mandiri. Fixture hanya memakai SQLite sementara dan API provider localhost. Hentikan dengan Ctrl+C untuk membersihkan sandbox.
+
+Password akun baru memakai scrypt; hash SHA256 lama dimigrasi saat login berhasil. Cadangkan database sebelum upgrade: kode lama tidak dapat memverifikasi hash scrypt. Rollback kode saja setelah migrasi password tidak cukup. Batas autentikasi berlaku per akun sasaran + IP koneksi, per rute (30 percobaan per 5 menit): hanya POST login/setup dan PATCH email/password yang mencapai verifikasi. Alias email/username berbagi kuota login; perubahan akun memakai ID sesi yang sudah diautentikasi. Request anonim, metode/rute tidak didukung, dan login dengan tipe body tidak valid tidak mengambil kuota akun lain; setup tidak memakai kuota setelah owner ada. Identitas login yang tidak dikenal langsung ditolak tanpa scrypt atau bucket. Di balik proxy, penyerang masih dapat mengunci **akun sasaran** sampai jendela 5 menit berakhir, bukan seluruh pengguna; percobaan berhasil juga dihitung. Limiter ini hanya dalam memori satu proses (maksimal 10.000 bucket). Untuk anti-DoS/credential stuffing atau multi-proses, pasang limiter edge dengan IP klien tepercaya, jangan percaya `X-Forwarded-For` mentah.
 
 ## 1. Prasyarat VPS
 
@@ -390,7 +395,8 @@ Pastikan browser memakai domain/port yang sama dengan instance PM2. Jangan menja
 
 - Pastikan folder dibagikan ke `client_email` service account.
 - Gunakan hak `Editor` atau `Content manager`.
-- Gunakan folder Shared Drive bila memakai service account.
+- Service account wajib memakai folder **Shared Drive**. Hak Editor pada folder My Drive pribadi tidak menyediakan kuota milik service account; untuk folder pribadi gunakan **Login Google (OAuth)**.
+- Pilihan upload **Otomatis** memeriksa kandidat sebelum mengirim berkas: provider tidak lengkap/penuh, Telegram di atas 50 MB, dan Google service account tanpa Shared Drive dilewati. Pilihan provider manual tidak dialihkan diam-diam. Setelah pengiriman mulai, server tidak mencoba provider lain agar berkas tidak terduplikasi.
 - Pastikan `STORAGE_CONFIG_KEY` tidak berubah.
 - Baca pesan API Google di dashboard dan `pm2 logs`.
 

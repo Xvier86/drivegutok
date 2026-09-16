@@ -105,7 +105,7 @@ const tiruan = http.createServer((req, res) => {
     if (jalur === '/token') return kirim({ access_token: 'token-uji', expires_in: 3600 });
     if (jalur.endsWith('/getChat')) return kirim({ ok: true, result: { id: 1, title: 'uji' } });
     if (jalur.endsWith('/sendDocument')) { diterimaProvider.telegram = diterima; return kirim({ ok: true, result: { message_id: 1, document: { file_id: 'uji-telegram', file_size: diterima } } }); }
-    if (jalur === '/drive/v3/files/folder-uji') return kirim({ id: 'folder-uji', name: 'uji', mimeType: 'application/vnd.google-apps.folder', capabilities: { canAddChildren: true } });
+    if (jalur === '/drive/v3/files/folder-uji') return kirim({ id: 'folder-uji', name: 'uji', driveId: 'shared-drive-uji', mimeType: 'application/vnd.google-apps.folder', capabilities: { canAddChildren: true } });
     if (jalur === '/upload/drive/v3/files') { diterimaProvider.gdrive = diterima; diterimaProvider.contentLengthGdrive = Number(req.headers['content-length']); return kirim({ id: 'uji-google', size: String(diterima) }); }
     if (jalur.startsWith('/drive/v3/about')) return kirim({ storageQuota: { usage: '0', limit: '1000000000' } });
     return kirim({ error: { message: `endpoint tiruan tidak dikenal: ${jalur}` } }, 404);

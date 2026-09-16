@@ -114,6 +114,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
   background: var(--gold-soft);
   color: var(--gold);
 }
+.folder-open { grid-column: 1 / 3; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-3); min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .file-card.folder .file-icon { background: rgba(231, 185, 63, 0.18); }
 /* Berkas yang punya link CDN diberi warna berbeda supaya langsung terlihat mana yang publik. */
 .file-card.is-cdn .file-icon { background: rgba(231, 185, 63, 0.24); color: var(--gold-bright); }
@@ -196,8 +197,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .modal-backdrop { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: var(--space-4); background: rgba(9, 8, 5, 0.72); }
 .modal { width: min(560px, 100%); max-height: 90vh; overflow: auto; padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow); }
 .modal h2 { margin-bottom: var(--space-4); }
-.modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-5); }
-.preview-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
+.modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-5); }
+.preview-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
 .media-preview, .media-frame { width: 100%; max-height: 60vh; border: 0; border-radius: var(--radius); background: var(--ink); }
 .media-audio { width: 100%; }
 .media-empty { padding: var(--space-5); border-radius: var(--radius); background: var(--ink-soft); color: var(--muted); text-align: center; }

@@ -10,6 +10,7 @@ import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 // Selamatkan proses dari promise yang reject tanpa catch. Contoh nyata: megajs membuat promise
 // internal yang reject saat akun Mega diblokir (`Error: EBLOCKED (-16): User blocked`). Node 20
@@ -90,6 +91,19 @@ const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 const json = (res, data, status = 200) => res.status(status).json(data);
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
+const scrypt = promisify(crypto.scrypt);
+const scryptOptions = { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 };
+async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return `scrypt$${salt}$${(await scrypt(password, salt, 64, scryptOptions)).toString('hex')}`;
+}
+async function verifyPassword(password, saved) {
+  if (typeof password !== 'string' || password.length > 1024) return false;
+  if (/^[a-f0-9]{64}$/.test(saved)) return crypto.timingSafeEqual(Buffer.from(hash(password), 'hex'), Buffer.from(saved, 'hex'));
+  if (!/^scrypt\$[a-f0-9]{32}\$[a-f0-9]{128}$/.test(saved)) return false;
+  const [, salt, expected] = saved.split('$');
+  return crypto.timingSafeEqual(await scrypt(password, salt, 64, scryptOptions), Buffer.from(expected, 'hex'));
+}
 const safeName = (name) => path.basename(name).replace(/[^\w. -]/g, '_');
 const cookieOptions = `Path=/; HttpOnly; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`;
 const providerRequirements = {
@@ -149,7 +163,7 @@ function retentionExpiry(type, value) {
   const expiry = new Date();
   if (type === 'months') expiry.setMonth(expiry.getMonth() + amount);
   else expiry.setDate(expiry.getDate() + amount);
-  return expiry.toISOString();
+  return Number.isNaN(expiry.getTime()) ? null : expiry.toISOString();
 }
 async function encryptUpload(file) {
   const iv = crypto.randomBytes(16);
@@ -240,7 +254,7 @@ function base64Url(value) { return Buffer.from(value).toString('base64url'); }
 // Penukaran token Google dipakai dua jalur: refresh token (setiap kali API dipanggil) dan kode
 // otorisasi (sekali saat Owner menekan "Login dengan Google").
 async function googleTokenRequest(parameters) {
-  const response = await fetch(`${GOOGLE_API}/oauth2/v3/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(parameters) });
+  const response = await fetch(`${GOOGLE_API}/oauth2/v3/token`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(parameters), signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.access_token) throw new Error(result.error_description || result.error || `Google token API ${response.status}`);
   return result;
@@ -261,7 +275,7 @@ async function getGoogleAccessToken(config) {
   const payload = base64Url(JSON.stringify({ iss: account.client_email, scope: 'https://www.googleapis.com/auth/drive', aud: account.token_uri, iat: nowSeconds, exp: nowSeconds + 3600 }));
   const signer = crypto.createSign('RSA-SHA256'); signer.update(`${header}.${payload}`); signer.end();
   const assertion = `${header}.${payload}.${signer.sign(account.private_key, 'base64url')}`;
-  const response = await fetch(account.token_uri, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }) });
+  const response = await fetch(account.token_uri, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }), signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
   const result = await response.json();
   if (!response.ok || !result.access_token) throw new Error(result.error_description || `Google token API ${response.status}`);
   return result.access_token;
@@ -295,6 +309,30 @@ function refreshCapacityInBackground(provider) {
     .then((capacity) => capacityCache.set(provider.id, { ...capacity, at: Date.now() }))
     .catch((error) => capacityCache.set(provider.id, { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'error', capacityError: error.message, at: Date.now() }))
     .finally(() => capacityInFlight.delete(provider.id));
+}
+async function selectUploadProvider(requestedId, size) {
+  const candidates = requestedId
+    ? db.prepare("SELECT * FROM providers WHERE id = ? AND kind != 'local' AND enabled = 1").all(requestedId)
+    : db.prepare("SELECT * FROM providers WHERE kind != 'local' AND enabled = 1 ORDER BY used_bytes ASC").all();
+  let reason = 'Belum ada provider remote yang aktif dan terkonfigurasi.';
+  for (const provider of candidates) {
+    try {
+      if (!providerKinds.has(provider.kind) || !providerStatus(provider).configured) throw new Error('Provider aktif belum memiliki konfigurasi lengkap.');
+      const config = decryptConfig(provider.config_json);
+      if (provider.kind === 'telegram' && !config.chatId && !config.ownerId && !process.env.TELEGRAM_CHAT_ID) throw new Error('Telegram membutuhkan channel ID atau owner ID sebagai tujuan.');
+      if (provider.kind === 'telegram' && size > 50 * 1024 * 1024) throw new Error('Telegram hanya menerima file sampai 50 MB. Gunakan provider lain atau perkecil file.');
+      const cached = capacityCache.get(provider.id);
+      const capacity = provider.kind !== 'telegram' && cached && !cached.capacityError && Date.now() - cached.at < CAPACITY_TTL_MS ? cached : null;
+      if ((capacity?.capacityBytes ?? provider.capacity_bytes) > 0 && (capacity?.usedBytes ?? provider.used_bytes) + size > (capacity?.capacityBytes ?? provider.capacity_bytes)) throw new Error('Kapasitas provider tidak mencukupi.');
+      if (provider.kind === 'gdrive' && config.authMode !== 'oauth') await verifyGoogleProvider(config);
+      return provider;
+    } catch (error) {
+      reason = error.message;
+      if (requestedId) throw error;
+    }
+  }
+  // Hanya preflight yang boleh mencoba kandidat lain; upload tidak diulang karena risiko duplikat.
+  throw new Error(reason);
 }
 // Kirim badan multipart sebagai stream dengan Content-Length pasti, lewat node:http/https.
 // fetch() Node (undici) menahan seluruh badan request di memori sebelum mengirim — terukur file
@@ -376,10 +414,11 @@ async function uploadToGoogleDrive(file, config, name, mimeType) {
   const metadata = JSON.stringify({ name, mimeType, parents: [config.folderId] });
   // Folder diperiksa lebih dulu supaya kegagalan izin muncul sebagai pesan yang jelas, bukan
   // setelah seluruh file terkirim.
-  const folderCheck = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(config.folderId)}?fields=id,name,mimeType,driveId,capabilities&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const folderCheck = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(config.folderId)}?fields=id,name,mimeType,driveId,capabilities&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
   const folderResult = await folderCheck.json();
   if (!folderCheck.ok || folderResult.mimeType !== 'application/vnd.google-apps.folder') throw new Error(folderResult.error?.message || 'Folder Google Drive tidak ditemukan atau belum dibagikan ke service account.');
   if (folderResult.capabilities?.canAddChildren === false) throw new Error('Service account hanya bisa membaca folder Google Drive. Beri akses Editor/Content manager pada folder atau Shared Drive.');
+  if (config.authMode !== 'oauth' && !folderResult.driveId) throw new Error('Service account Google memerlukan folder di Shared Drive. Untuk folder My Drive pribadi, gunakan Login Google (OAuth).');
   // Metadata dan berkas dikirim dalam satu badan multipart yang mengalir dari disk, dengan
   // Content-Length pasti (dihitung dari ukuran bagian). Lihat catatan di kirimMultipart: fetch()
   // menahan seluruh badan di RAM, dan versi lama memakai readFileSync + Buffer.concat (2x ukuran
@@ -522,6 +561,11 @@ async function sendRemoteFile(res, file, provider, disposition = 'inline', range
   }
   // Content-Length tidak dikirim untuk respons penuh supaya respons memakai chunked transfer. Ini
   // menghindari respons menggantung kalau ukuran asli di provider tidak sama dengan metadata.
+  // Konten unggahan bukan kode aplikasi: SVG/HTML tidak boleh memakai origin/sesi workspace.
+  res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'");
+  // URL publik dapat dicabut/kedaluwarsa; cache tidak boleh melewati pemeriksaan akses.
+  res.setHeader('Cache-Control', 'no-store');
+  if (disposition === 'inline' && !/^(image|video|audio)\/|^(application\/pdf|text\/plain)(;|$)/i.test(file.mime_type)) disposition = 'attachment';
   res.setHeader('Content-Type', file.mime_type);
   res.setHeader('Content-Disposition', `${disposition}; filename="${safeName(file.name)}"`);
   const output = encryptedMatch ? source.pipe(crypto.createDecipheriv('aes-256-ctr', configKey, Buffer.from(encryptedMatch[1], 'base64url'))) : source;
@@ -538,15 +582,21 @@ async function sendRemoteFile(res, file, provider, disposition = 'inline', range
 async function verifyGoogleProvider(config) {
   config = normalizeProviderConfig('gdrive', config);
   const accessToken = await getGoogleAccessToken(config);
-  const response = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(config.folderId)}?fields=id,name,mimeType,driveId,capabilities&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const response = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(config.folderId)}?fields=id,name,mimeType,driveId,capabilities&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error?.message || `Google Drive API ${response.status}`);
   if (result.mimeType !== 'application/vnd.google-apps.folder') throw new Error('Link tersebut bukan folder Google Drive.');
   if (result.capabilities?.canAddChildren === false) throw new Error('Service account tidak memiliki hak membuat file di folder ini. Beri akses Editor.');
+  if (config.authMode !== 'oauth' && !result.driveId) throw new Error('Service account Google memerlukan folder di Shared Drive. Untuk folder My Drive pribadi, gunakan Login Google (OAuth).');
   return result;
 }
 
 app.use(express.json({ limit: '2mb' }));
+app.use((req, res, next) => {
+  req.body ??= {};
+  if (typeof req.body !== 'object' || Array.isArray(req.body)) return json(res, { error: 'Body harus objek JSON.' }, 400);
+  return next();
+});
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
@@ -571,6 +621,24 @@ app.use(express.static(path.join(root, 'assets'), {
   setHeaders: (res, berkas) => { res.setHeader('Cache-Control', /\.(js|css|html)$/.test(berkas) ? 'no-store' : 'public, max-age=86400'); },
 }));
 
+
+// ponytail: satu proses, 30 percobaan/akun/rute/5 menit; proxy dapat mengunci akun sasaran,
+// bukan semua akun. Tambahkan limiter edge ber-IP tepercaya untuk multi-proses/anti-DoS.
+const authAttempts = new Map();
+const AUTH_WINDOW_MS = 5 * 60 * 1000;
+function allowAuthAttempt(req, res, target) {
+  const at = Date.now();
+  for (const [key, entry] of authAttempts) if (entry.until <= at) authAttempts.delete(key);
+  const key = JSON.stringify([req.route.path, target, req.socket.remoteAddress]);
+  let entry = authAttempts.get(key);
+  if (!entry && authAttempts.size < 10000) { entry = { count: 0, until: at + AUTH_WINDOW_MS }; authAttempts.set(key, entry); }
+  if (!entry || ++entry.count > 30) {
+    res.setHeader('Retry-After', String(Math.ceil(((entry?.until || at + AUTH_WINDOW_MS) - at) / 1000)));
+    json(res, { error: 'Terlalu banyak percobaan. Coba lagi nanti.' }, 429);
+    return false;
+  }
+  return true;
+}
 
 function currentUser(req) {
   const token = req.headers.cookie?.match(/mydrive_session=([^;]+)/)?.[1];
@@ -651,10 +719,15 @@ async function purgeFileRecord(file) {
   // Penghapusan remote bisa menggantung kalau provider bermasalah (akun Mega diblokir, jaringan
   // mati). Tanpa batas waktu, satu file seperti itu menahan seluruh proses pembersihan Sampah.
   const result = await batasWaktu(deleteFromProvider(file, provider), 'Provider', PROVIDER_DELETE_TIMEOUT_MS);
-  db.prepare('UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?').run(file.size, file.provider);
   if (file.remote_file_id) fs.rmSync(path.join(storageDir, file.remote_file_id), { force: true });
-  db.prepare('DELETE FROM shares WHERE file_id = ?').run(file.id);
-  db.prepare('DELETE FROM files WHERE id = ?').run(file.id);
+  const removed = db.transaction(() => {
+    if (!db.prepare('DELETE FROM files WHERE id = ?').run(file.id).changes) return false;
+    db.prepare('DELETE FROM shares WHERE file_id = ?').run(file.id);
+    db.prepare('UPDATE providers SET used_bytes = MAX(0, used_bytes - ?) WHERE id = ?').run(file.size, file.provider);
+    return true;
+  })();
+  const cached = capacityCache.get(file.provider);
+  if (removed && cached && !result?.skipped) cached.usedBytes = Math.max(0, cached.usedBytes - file.size);
   return result;
 }
 // Hapus permanen satu folder beserta isinya. Kalau ada file yang gagal dihapus dari
@@ -705,18 +778,27 @@ function purgeExpiredTrashInBackground(ownerId) {
 }
 
 app.get('/api/setup', (_req, res) => json(res, { needsSetup: db.prepare('SELECT COUNT(*) AS count FROM users').get().count === 0 }));
-app.post('/api/setup', (req, res) => {
+app.post('/api/setup', async (req, res) => {
   if (db.prepare('SELECT COUNT(*) AS count FROM users').get().count > 0) return json(res, { error: 'Owner sudah dibuat.' }, 409);
   const { email, username, password } = req.body;
-  if (!email || !username || !password || password.length < 8) return json(res, { error: 'Email, username, dan password minimal 8 karakter wajib diisi.' }, 400);
+  if (typeof email !== 'string' || !emailPattern.test(email.trim()) || typeof username !== 'string' || !username.trim() || typeof password !== 'string' || password.length < 8 || password.length > 1024) return json(res, { error: 'Email, username, dan password minimal 8 karakter wajib diisi.' }, 400);
   const user = { id: id(), email: email.trim().toLowerCase(), username: username.trim(), role: 'owner', status: 'active', created_at: now() };
-  try { db.prepare('INSERT INTO users (id, email, username, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(user.id, user.email, user.username, hash(password), user.role, user.status, user.created_at); return json(res, { user }, 201); }
+  if (!allowAuthAttempt(req, res, 'setup')) return;
+  const passwordHash = await hashPassword(password);
+  if (db.prepare('SELECT COUNT(*) AS count FROM users').get().count > 0) return json(res, { error: 'Owner sudah dibuat.' }, 409);
+  try { db.prepare('INSERT INTO users (id, email, username, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(user.id, user.email, user.username, passwordHash, user.role, user.status, user.created_at); return json(res, { user }, 201); }
   catch { return json(res, { error: 'Email atau username sudah digunakan.' }, 409); }
 });
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
+  if (typeof req.body.identity !== 'string' || typeof req.body.password !== 'string' || req.body.password.length > 1024) return json(res, { error: 'Identitas dan password harus teks.' }, 400);
   const identity = req.body.identity?.trim() || '';
   const user = db.prepare("SELECT * FROM users WHERE (email = ? OR username = ?) AND status = 'active'").get(identity.toLowerCase(), identity);
-  if (!user || user.password_hash !== hash(req.body.password || '')) return json(res, { error: 'Identitas atau password salah.' }, 401);
+  // ID menyatukan alias email/username; identitas tidak dikenal tidak melakukan scrypt.
+  if (user && !allowAuthAttempt(req, res, user.id)) return;
+  if (!user || !await verifyPassword(req.body.password || '', user.password_hash)) return json(res, { error: 'Identitas atau password salah.' }, 401);
+  const passwordHash = user.password_hash.startsWith('scrypt$') ? user.password_hash : await hashPassword(req.body.password);
+  // Verifikasi async tidak boleh menghidupkan sesi setelah password/status sudah berubah.
+  if (!db.prepare("UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ? AND status = 'active'").run(passwordHash, user.id, user.password_hash).changes) return json(res, { error: 'Identitas atau password salah.' }, 401);
   const token = crypto.randomBytes(32).toString('hex');
   db.prepare('INSERT INTO sessions VALUES (?, ?, ?)').run(token, user.id, new Date(Date.now() + sessionTtl * 1000).toISOString());
   res.setHeader('Set-Cookie', `mydrive_session=${token}; Max-Age=${sessionTtl}; ${cookieOptions}`);
@@ -741,27 +823,27 @@ app.get('/api/me', requireUser, (req, res) => json(res, { user: req.user }));
 // menebak-nebak: kalau nanti verifikasi email ditambahkan, nilainya tinggal diubah di satu tempat.
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const passwordSaatIniSalah = (res) => json(res, { error: 'Password saat ini salah.' }, 401);
-app.patch('/api/account/email', requireUser, (req, res) => {
+app.patch('/api/account/email', requireUser, async (req, res) => {
   const baru = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   if (!emailPattern.test(baru)) return json(res, { error: 'Email baru tidak valid.' }, 400);
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (user.password_hash !== hash(String(req.body.currentPassword || ''))) return passwordSaatIniSalah(res);
+  if (!allowAuthAttempt(req, res, user.id)) return;
+  if (!await verifyPassword(req.body.currentPassword || '', user.password_hash)) return passwordSaatIniSalah(res);
   if (db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(baru, user.id)) return json(res, { error: 'Email sudah digunakan akun lain.' }, 409);
-  db.prepare('UPDATE users SET email = ? WHERE id = ?').run(baru, user.id);
+  if (!db.prepare("UPDATE users SET email = ? WHERE id = ? AND password_hash = ? AND status = 'active'").run(baru, user.id, user.password_hash).changes) return passwordSaatIniSalah(res);
   audit(req.user.id, 'update_email', 'user', user.id);
   return json(res, { user: { ...req.user, email: baru }, verificationRequired: false });
 });
-app.patch('/api/account/password', requireUser, (req, res) => {
+app.patch('/api/account/password', requireUser, async (req, res) => {
   const { newPassword, confirmPassword } = req.body;
   // Minimal 8 karakter, sama dengan /api/setup dan /api/admin/users, supaya aturan panjangnya satu.
-  if (!newPassword || String(newPassword).length < 8) return json(res, { error: 'Password baru minimal 8 karakter.' }, 400);
+  if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 1024 || typeof confirmPassword !== 'string') return json(res, { error: 'Password baru harus teks sepanjang 8–1024 karakter.' }, 400);
   if (String(newPassword) !== String(confirmPassword || '')) return json(res, { error: 'Konfirmasi password baru tidak sama.' }, 400);
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (user.password_hash !== hash(String(req.body.currentPassword || ''))) return passwordSaatIniSalah(res);
-  // Memakai hash() yang sama dengan login dan /api/setup — satu-satunya metode hashing di project ini.
-  // ponytail: sha256 tanpa salt itu lemah untuk password; naikkan ke scrypt + rehash saat login kalau
-  // daftar user sudah tidak bisa dimigrasi sekaligus (lihat catatan di PR/commit).
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash(String(newPassword)), user.id);
+  if (!allowAuthAttempt(req, res, user.id)) return;
+  if (!await verifyPassword(req.body.currentPassword || '', user.password_hash)) return passwordSaatIniSalah(res);
+  const passwordHash = await hashPassword(String(newPassword));
+  if (!db.prepare("UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ? AND status = 'active'").run(passwordHash, user.id, user.password_hash).changes) return passwordSaatIniSalah(res);
   // Sesi lain diakhiri: password diganti biasanya karena ada yang bocor, dan membiarkan sesi lama hidup
   // membuat penggantian tidak ada gunanya. Sesi yang sedang dipakai (token di cookie permintaan ini)
   // dipertahankan supaya user tidak terlempar ke halaman login setelah mengganti passwordnya sendiri.
@@ -885,32 +967,32 @@ app.post('/api/files', requireUser, upload.single('file'), async (req, res) => {
   const retentionType = req.body.retentionType === 'days' || req.body.retentionType === 'months' ? req.body.retentionType : 'forever';
   const retentionValue = retentionType === 'forever' ? null : Number(req.body.retentionValue);
   const expiresAt = retentionExpiry(retentionType, retentionValue);
+  if (retentionType !== 'forever' && !expiresAt) { if (file) fs.rmSync(file.path, { force: true }); return json(res, { error: 'Masa simpan harus bilangan bulat positif dengan tanggal yang valid.' }, 400); }
   const encrypted = req.user.role === 'owner' && req.body.encrypt === 'true';
   if (!name) { if (file) fs.rmSync(file.path, { force: true }); return json(res, { error: 'File wajib dipilih.' }, 400); }
+  const target = resolveTargetFolder(req.user.id, req.body.folderId);
+  if (!target.ok) { if (file) fs.rmSync(file.path, { force: true }); return json(res, { error: target.error }, target.status); }
   const requestedProvider = req.user.role === 'owner' ? String(req.body.providerId || '') : '';
-  const provider = requestedProvider ? db.prepare("SELECT id, kind, capacity_bytes, used_bytes, config_json FROM providers WHERE id = ? AND kind != 'local' AND enabled = 1").get(requestedProvider) : db.prepare("SELECT id, kind, capacity_bytes, used_bytes, config_json FROM providers WHERE kind != 'local' AND enabled = 1 ORDER BY used_bytes ASC LIMIT 1").get();
-  if (!provider) { if (file) fs.rmSync(file.path, { force: true }); return json(res, { error: 'Belum ada provider remote yang aktif dan terkonfigurasi.' }, 409); }
-  if (!providerStatus(provider).configured) { if (file) fs.rmSync(file.path, { force: true }); return json(res, { error: 'Provider aktif belum memiliki konfigurasi lengkap.' }, 409); }
   if (!file) return json(res, { error: 'File wajib dipilih.' }, 400);
-  // Telegram Bot API menolak file di atas 50 MB, dan penolakan itu baru muncul setelah seluruh
-  // file terkirim. Validasi lebih awal supaya bandwidth tidak terbuang.
-  const telegramLimitBytes = 50 * 1024 * 1024;
-  if (provider.kind === 'telegram' && file.size > telegramLimitBytes) { fs.rmSync(file.path, { force: true }); return json(res, { error: `Telegram hanya menerima file sampai ${Math.floor(telegramLimitBytes / 1024 / 1024)} MB. Gunakan provider lain atau perkecil file.` }, 409); }
+  let provider;
+  try { provider = await selectUploadProvider(requestedProvider, file.size); }
+  catch (error) { fs.rmSync(file.path, { force: true }); return json(res, { error: error.message }, 409); }
   let uploadFile = file;
-  if (encrypted) uploadFile = await encryptUpload(file);
-  const size = uploadFile.size;
-  if (provider.capacity_bytes > 0 && provider.used_bytes + size > provider.capacity_bytes) { fs.rmSync(file.path, { force: true }); return json(res, { error: 'Kapasitas provider tidak mencukupi.' }, 409); }
+  const size = file.size; // AES-CTR tidak mengubah ukuran berkas.
   // Membedakan "provider gagal" dari "klien sudah pergi" penting saat membaca log: Cloudflare
   // memutus permintaan di 100 detik, dan tanpa penanda ini penyebabnya tidak bisa dipisahkan.
   let dibatalkan = false;
   const mulaiUnggah = Date.now();
   res.on('close', () => { if (!res.writableEnded) dibatalkan = true; });
   try {
+    if (encrypted) uploadFile = await encryptUpload(file);
     const uploaded = await uploadToProvider(uploadFile, provider, safeName(name), mimeType);
     const fileId = id();
     const remoteFileId = encrypted ? `enc:${uploadFile.iv}:${uploaded.remoteFileId}` : uploaded.remoteFileId;
-    const record = { id: fileId, owner_id: req.user.id, folder_id: req.body.folderId || null, name: safeName(name), mime_type: mimeType, size: uploaded.size, provider: provider.id, remote_file_id: remoteFileId, uploaded_by: req.user.id, uploaded_at: now(), cdn_enabled: isCdnMime(mimeType) && !encrypted ? 1 : 0, cdn_slug: isCdnMime(mimeType) && !encrypted ? newCdnSlug() : null, encrypted: encrypted ? 1 : 0, retention_type: retentionType, retention_value: retentionValue, expires_at: expiresAt };
+    const record = { id: fileId, owner_id: req.user.id, folder_id: target.folderId, name: safeName(name), mime_type: mimeType, size: uploaded.size, provider: provider.id, remote_file_id: remoteFileId, uploaded_by: req.user.id, uploaded_at: now(), cdn_enabled: isCdnMime(mimeType) && !encrypted ? 1 : 0, cdn_slug: isCdnMime(mimeType) && !encrypted ? newCdnSlug() : null, encrypted: encrypted ? 1 : 0, retention_type: retentionType, retention_value: retentionValue, expires_at: expiresAt };
     db.prepare('INSERT INTO files (id, owner_id, folder_id, name, mime_type, size, provider, remote_file_id, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(record.id, record.owner_id, record.folder_id, record.name, record.mime_type, record.size, record.provider, record.remote_file_id, record.uploaded_by, record.uploaded_at, record.cdn_enabled, record.cdn_slug, record.encrypted, record.retention_type, record.retention_value, record.expires_at);
+    const cached = capacityCache.get(provider.id);
+    if (cached && !cached.capacityError) cached.usedBytes += record.size;
     db.prepare('UPDATE providers SET used_bytes = used_bytes + ? WHERE id = ?').run(record.size, provider.id); audit(req.user.id, 'upload', 'file', record.id); return json(res, record, 201);
   } catch (error) {
     console.error(`[upload] ${provider.kind} gagal${dibatalkan ? ' (klien memutus permintaan)' : ''} setelah ${((Date.now() - mulaiUnggah) / 1000).toFixed(1)}s (${safeName(name)}, ${size} byte): ${error.message}`);
@@ -925,15 +1007,20 @@ app.post('/api/files/cdn', requireUser, (req, res, next) => cdnUpload.single('fi
   const retentionType = req.body.retentionType === 'days' || req.body.retentionType === 'months' ? req.body.retentionType : 'forever';
   const retentionValue = retentionType === 'forever' ? null : Number(req.body.retentionValue);
   const expiresAt = retentionExpiry(retentionType, retentionValue);
+  if (retentionType !== 'forever' && !expiresAt) { if (file) fs.rmSync(file.path, { force: true }); return json(res, { error: 'Masa simpan harus bilangan bulat positif dengan tanggal yang valid.' }, 400); }
   if (!file || !name || !/^(image|video)\//.test(mimeType)) { if (file) fs.rmSync(file.path, { force: true }); return json(res, { error: 'Upload CDN hanya menerima gambar atau video maksimal 5 MB.' }, 400); }
+  const target = resolveTargetFolder(req.user.id, req.body.folderId);
+  if (!target.ok) { fs.rmSync(file.path, { force: true }); return json(res, { error: target.error }, target.status); }
   const requestedProvider = req.user.role === 'owner' ? String(req.body.providerId || '') : '';
-  const provider = requestedProvider ? db.prepare("SELECT id, kind, capacity_bytes, used_bytes, config_json FROM providers WHERE id = ? AND kind != 'local' AND enabled = 1").get(requestedProvider) : db.prepare("SELECT id, kind, capacity_bytes, used_bytes, config_json FROM providers WHERE kind != 'local' AND enabled = 1 ORDER BY used_bytes ASC LIMIT 1").get();
-  if (!provider || !providerStatus(provider).configured) { fs.rmSync(file.path, { force: true }); return json(res, { error: 'Aktifkan provider storage terlebih dahulu.' }, 409); }
-  if (provider.capacity_bytes > 0 && provider.used_bytes + file.size > provider.capacity_bytes) { fs.rmSync(file.path, { force: true }); return json(res, { error: 'Kapasitas provider tidak mencukupi.' }, 409); }
+  let provider;
+  try { provider = await selectUploadProvider(requestedProvider, file.size); }
+  catch (error) { fs.rmSync(file.path, { force: true }); return json(res, { error: error.message }, 409); }
   try {
     const uploaded = await uploadToProvider(file, provider, safeName(name), mimeType);
-    const record = { id: id(), owner_id: req.user.id, folder_id: req.body.folderId || null, name: safeName(name), mime_type: mimeType, size: uploaded.size, provider: provider.id, remote_file_id: uploaded.remoteFileId, uploaded_by: req.user.id, uploaded_at: now(), cdn_enabled: 1, cdn_slug: newCdnSlug(), encrypted: 0, retention_type: retentionType, retention_value: retentionValue, expires_at: expiresAt };
+    const record = { id: id(), owner_id: req.user.id, folder_id: target.folderId, name: safeName(name), mime_type: mimeType, size: uploaded.size, provider: provider.id, remote_file_id: uploaded.remoteFileId, uploaded_by: req.user.id, uploaded_at: now(), cdn_enabled: 1, cdn_slug: newCdnSlug(), encrypted: 0, retention_type: retentionType, retention_value: retentionValue, expires_at: expiresAt };
     db.prepare('INSERT INTO files (id, owner_id, folder_id, name, mime_type, size, provider, remote_file_id, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(record.id, record.owner_id, record.folder_id, record.name, record.mime_type, record.size, record.provider, record.remote_file_id, record.uploaded_by, record.uploaded_at, record.cdn_enabled, record.cdn_slug, record.encrypted, record.retention_type, record.retention_value, record.expires_at);
+    const cached = capacityCache.get(provider.id);
+    if (cached && !cached.capacityError) cached.usedBytes += record.size;
     db.prepare('UPDATE providers SET used_bytes = used_bytes + ? WHERE id = ?').run(record.size, provider.id); audit(req.user.id, 'upload_cdn', 'file', record.id); return json(res, { ...record, cdnUrl: `/cdn/${record.cdn_slug}` }, 201);
   } catch (error) {
     console.error(`[upload] cdn gagal (${safeName(name)}, ${file.size} byte): ${error.message}`);
@@ -941,7 +1028,7 @@ app.post('/api/files/cdn', requireUser, (req, res, next) => cdnUpload.single('fi
   }
   finally { fs.rmSync(file.path, { force: true }); }
 });
-app.get('/api/files/:id/download', requireUser, async (req, res) => { const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return json(res, { error: 'File tidak ditemukan.' }, 404); try { return await sendRemoteFile(res, file, provider, 'inline', req.headers.range); } catch (error) { return json(res, { error: error.message }, 502); } });
+app.get('/api/files/:id/download', requireUser, async (req, res) => { const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)').get(req.params.id, req.user.id, now()); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return json(res, { error: 'File tidak ditemukan.' }, 404); try { return await sendRemoteFile(res, file, provider, 'inline', req.headers.range); } catch (error) { return json(res, { error: error.message }, 502); } });
 app.patch('/api/files/:id', requireUser, (req, res) => {
   const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
   if (!file) return json(res, { error: 'File tidak ditemukan.' }, 404);
@@ -1006,7 +1093,7 @@ app.delete('/api/files/:id/permanent', requireUser, async (req, res) => {
   return res.status(204).end();
 });
 app.post('/api/files/:id/share', requireUser, (req, res) => {
-  const file = db.prepare('SELECT id, name, mime_type FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
+  const file = db.prepare('SELECT id, name, mime_type FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)').get(req.params.id, req.user.id, now());
   if (!file) return json(res, { error: 'File tidak ditemukan.' }, 404);
   const token = crypto.randomBytes(24).toString('hex');
   const expiryDate = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
@@ -1016,16 +1103,20 @@ app.post('/api/files/:id/share', requireUser, (req, res) => {
   if (sharePassword && sharePassword.length < 4) return json(res, { error: 'Password share minimal 4 karakter.' }, 400);
   db.prepare('INSERT INTO shares (token, file_id, password_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)').run(token, file.id, sharePassword ? hash(sharePassword) : null, expiresAt, now());
   audit(req.user.id, 'share', 'file', file.id);
-  return json(res, { token, url: `${req.protocol}://${req.get('host')}/s/${token}`, expiresAt });
+  const base = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+  return json(res, { token, url: `${base}/s/${token}/download`, expiresAt });
 });
 app.get('/api/shares/:token', (req, res) => {
-  const share = db.prepare('SELECT shares.*, files.name, files.mime_type, files.remote_file_id FROM shares JOIN files ON files.id = shares.file_id WHERE shares.token = ? AND files.deleted_at IS NULL').get(req.params.token);
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.query.password !== undefined && typeof req.query.password !== 'string') return json(res, { error: 'Password harus teks.' }, 400);
+  const share = db.prepare('SELECT shares.*, files.name, files.mime_type, files.remote_file_id FROM shares JOIN files ON files.id = shares.file_id WHERE shares.token = ? AND files.deleted_at IS NULL AND (files.expires_at IS NULL OR files.expires_at > ?)').get(req.params.token, now());
   if (!share || (share.expires_at && share.expires_at <= now())) return json(res, { error: 'Link share tidak berlaku.' }, 404);
   if (share.password_hash && share.password_hash !== hash(req.query.password || '')) return json(res, { error: 'Password share salah atau belum diisi.' }, 401);
   return json(res, { name: share.name, mimeType: share.mime_type, downloadUrl: `/s/${share.token}/download` });
 });
-app.get('/s/:token/download', async (req, res) => {
-  const share = db.prepare('SELECT shares.*, files.name, files.mime_type, files.size, files.provider, files.remote_file_id FROM shares JOIN files ON files.id = shares.file_id WHERE shares.token = ? AND files.deleted_at IS NULL').get(req.params.token);
+app.get(['/s/:token', '/s/:token/download'], async (req, res) => {
+  if (req.query.password !== undefined && typeof req.query.password !== 'string') return json(res, { error: 'Password harus teks.' }, 400);
+  const share = db.prepare('SELECT shares.*, files.name, files.mime_type, files.size, files.provider, files.remote_file_id FROM shares JOIN files ON files.id = shares.file_id WHERE shares.token = ? AND files.deleted_at IS NULL AND (files.expires_at IS NULL OR files.expires_at > ?)').get(req.params.token, now());
   if (!share || (share.expires_at && share.expires_at <= now()) || (share.password_hash && share.password_hash !== hash(req.query.password || ''))) return res.status(404).end();
   const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(share.provider);
   if (!share.remote_file_id || !provider) return res.status(404).end();
@@ -1035,7 +1126,7 @@ app.get('/s/:token/download', async (req, res) => {
   try { return await sendRemoteFile(res, share, provider, 'attachment', req.headers.range); }
   catch { if (res.headersSent) return res.end(); return res.status(502).end(); }
 });
-app.get('/cdn/:slug', async (req, res) => { const file = db.prepare("SELECT * FROM files WHERE cdn_slug = ? AND cdn_enabled = 1 AND encrypted = 0 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.params.slug, now()); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return res.status(404).end(); res.setHeader('Cache-Control', 'public, max-age=86400, immutable'); try { return await sendRemoteFile(res, file, provider, 'inline', req.headers.range); } catch { if (res.headersSent) return res.end(); return res.status(502).end(); } });
+app.get('/cdn/:slug', async (req, res) => { const file = db.prepare("SELECT * FROM files WHERE cdn_slug = ? AND cdn_enabled = 1 AND encrypted = 0 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.params.slug, now()); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return res.status(404).end(); res.setHeader('Cache-Control', 'no-store'); try { return await sendRemoteFile(res, file, provider, 'inline', req.headers.range); } catch { if (res.headersSent) return res.end(); return res.status(502).end(); } });
 
 app.get('/api/admin/overview', requireUser, ownerOnly, (_req, res) => {
   const providers = db.prepare("SELECT * FROM providers WHERE kind != 'local' ORDER BY name").all();
@@ -1044,7 +1135,7 @@ app.get('/api/admin/overview', requireUser, ownerOnly, (_req, res) => {
   for (const provider of providers) refreshCapacityInBackground(provider);
   return json(res, { users: db.prepare('SELECT id, email, username, role, status, created_at FROM users ORDER BY created_at DESC').all(), files: db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM files WHERE deleted_at IS NULL').get(), providers: providers.map(providerStatusForView), logs: db.prepare('SELECT audit_logs.*, users.username FROM audit_logs JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 8').all() });
 });
-app.post('/api/admin/users', requireUser, ownerOnly, (req, res) => { const { email, username, password } = req.body; if (!email || !username || !password || password.length < 8) return json(res, { error: 'Data invite belum lengkap.' }, 400); const user = { id: id(), email: email.trim().toLowerCase(), username: username.trim(), role: 'user', status: 'active', created_at: now() }; try { db.prepare('INSERT INTO users (id, email, username, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(user.id, user.email, user.username, hash(password), user.role, user.status, user.created_at); audit(req.user.id, 'invite', 'user', user.id); return json(res, user, 201); } catch { return json(res, { error: 'Email atau username sudah digunakan.' }, 409); } });
+app.post('/api/admin/users', requireUser, ownerOnly, async (req, res) => { const { email, username, password } = req.body; if (typeof email !== 'string' || !emailPattern.test(email.trim()) || typeof username !== 'string' || !username.trim() || typeof password !== 'string' || password.length < 8 || password.length > 1024) return json(res, { error: 'Data invite belum lengkap.' }, 400); const user = { id: id(), email: email.trim().toLowerCase(), username: username.trim(), role: 'user', status: 'active', created_at: now() }; const passwordHash = await hashPassword(password); try { db.prepare('INSERT INTO users (id, email, username, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(user.id, user.email, user.username, passwordHash, user.role, user.status, user.created_at); audit(req.user.id, 'invite', 'user', user.id); return json(res, user, 201); } catch { return json(res, { error: 'Email atau username sudah digunakan.' }, 409); } });
 // Cabut/pulihkan akses member. `requireUser` sudah menolak baris user yang statusnya bukan 'active'
 // (lihat currentUser), jadi cukup mengubah kolom `status`; sesi yang sedang berjalan dihapus juga
 // supaya cookie lama tidak menyisakan apa pun. File milik member tetap utuh — mencabut akses bukan

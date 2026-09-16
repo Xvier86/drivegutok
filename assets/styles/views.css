@@ -27,7 +27,15 @@
    Ukuran h2 panel mengikuti h2 global (var(--fs-lg)) — tidak perlu override px lagi. */
 .files-panel .grid { margin-top: var(--space-2); }
 .panel.stats h3 { color: var(--muted-strong); }
-.file-list { gap: 2px; }
+.file-list { gap: 2px; grid-template-columns: minmax(0, 1fr); container-type: inline-size; container-name: file-list; }
+.files-panel { margin-bottom: calc(56px + var(--space-5) + env(safe-area-inset-bottom, 0px)); }
+
+/* Lebar daftar, bukan viewport: sidebar juga mengambil ruang pada tablet. */
+@container file-list (max-width: 520px) {
+  .card-actions { grid-column: 1 / -1; justify-content: flex-start; opacity: 1; }
+  .icon-btn { width: 44px; height: 44px; }
+  .file-card { padding-inline: 0; }
+}
 
 /* Tab pemisah berkas biasa dan berkas CDN. Pindah tab cuma mengganti data-tab di panel — CSS yang
    menyembunyikan baris, jadi tidak ada permintaan ulang ke server. */

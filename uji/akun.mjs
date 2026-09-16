@@ -8,7 +8,6 @@
 // dipakai lagi, dan sesi lain diakhiri saat password diganti.
 // Jalankan dari mana pun: node uji/akun.mjs
 import Database from 'better-sqlite3';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -58,7 +57,7 @@ const masuk = async (identity, password) => {
   const respons = await kirimJson('/api/login', { identity, password });
   return { status: respons.status, cookie: (respons.headers.get('set-cookie') || '').split(';')[0] };
 };
-const sha256 = (nilai) => crypto.createHash('sha256').update(nilai).digest('hex');
+
 
 try {
   let siap = false;
@@ -77,6 +76,7 @@ try {
   const db = new Database(path.join(kerja, 'data', 'mydrive.sqlite'));
   const akun = () => db.prepare("SELECT email, password_hash FROM users WHERE username = 'owner'").get();
   const emailDiDb = () => akun().email;
+  const hashAwal = akun().password_hash;
 
   // Gerbang utama: tanpa sesi dan dengan password saat ini yang salah, tidak ada yang berubah.
   const tanpaSesi = await kirimJson('/api/account/email', { email: 'penyerang@contoh.invalid', currentPassword: 'rahasia123' }, '', 'PATCH');
@@ -89,7 +89,7 @@ try {
   cek('email tidak berubah setelah percobaan gagal', emailDiDb() === 'owner@contoh.invalid', `email=${emailDiDb()}`);
   const sandiGantiSalah = await kirimJson('/api/account/password', { currentPassword: 'salah-sekali', newPassword: 'rahasia456', confirmPassword: 'rahasia456' }, cookieOwner, 'PATCH');
   cek('password saat ini salah -> ganti sandi ditolak 401', sandiGantiSalah.status === 401, `status=${sandiGantiSalah.status}`);
-  cek('hash password tidak berubah setelah percobaan gagal', akun().password_hash === sha256('rahasia123'));
+  cek('hash password tidak berubah setelah percobaan gagal', akun().password_hash === hashAwal);
 
   // Validasi isi.
   const emailBuruk = await kirimJson('/api/account/email', { email: 'bukan-email', currentPassword: 'rahasia123' }, cookieOwner, 'PATCH');
@@ -120,7 +120,7 @@ try {
   const ganti = await kirimJson('/api/account/password', { currentPassword: 'rahasia123', newPassword: 'rahasia456', confirmPassword: 'rahasia456' }, cookieOwner, 'PATCH');
   const dataGanti = await ganti.json().catch(() => null);
   cek('ganti sandi berhasil 200', ganti.status === 200, `status=${ganti.status} ${dataGanti?.error || ''}`);
-  cek('hash disimpan sebagai sha256 hex, bukan plaintext', akun().password_hash === sha256('rahasia456'), `hash=${akun().password_hash.slice(0, 16)}…`);
+  cek('hash password baru memakai scrypt bersalt', /^scrypt\$[a-f0-9]{32}\$[a-f0-9]{128}$/.test(akun().password_hash) && akun().password_hash !== hashAwal);
   const sesiLain = await api('/api/me', { headers: { cookie: sesiKedua.cookie } });
   cek('sesi lain diakhiri setelah ganti sandi', sesiLain.status === 401, `status=${sesiLain.status}`);
   const sesiSekarang = await api('/api/me', { headers: { cookie: cookieOwner } });

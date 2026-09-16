@@ -131,7 +131,10 @@ cek('Keluar ditangani sekali (delegasi) di app.js', /closest\('#logout'\)/.test(
 cek('server.js punya PATCH /api/account/email dan /api/account/password', /app\.patch\('\/api\/account\/email', requireUser/.test(sumberServer) && /app\.patch\('\/api\/account\/password', requireUser/.test(sumberServer));
 // Penjaga inti halaman ini: perubahan identitas akun TIDAK boleh diterima tanpa password saat ini.
 // Dua endpoint = dua pemeriksaan; satu yang terlewat sudah cukup untuk pengambilalihan akun.
-cek('kedua endpoint akun memeriksa password saat ini', (sumberServer.match(/passwordSaatIniSalah\(res\)/g) || []).length === 2 && /hash\(String\(req\.body\.currentPassword/.test(sumberServer));
+for (const route of ['email', 'password']) {
+  const handler = sumberServer.slice(sumberServer.indexOf(`app.patch('/api/account/${route}'`)).split('\n});')[0];
+  cek(`endpoint akun ${route} memverifikasi password saat ini`, /await verifyPassword\(req\.body\.currentPassword/.test(handler) && /return passwordSaatIniSalah\(res\)/.test(handler));
+}
 cek('akun.js memakai endpoint email dan password', /'\/api\/account\/email', \{ method: 'PATCH'/.test(sumberAkun) && /'\/api\/account\/password', \{ method: 'PATCH'/.test(sumberAkun));
 cek('akun.js menjelaskan status verifikasi dari balasan server', /data\.verificationRequired/.test(sumberAkun));
 

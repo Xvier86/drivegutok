@@ -1,5 +1,14 @@
 # Bug fix log — Gutok Drive
 
+## Audit upload, keamanan, dan UI
+
+- Log VPS mengonfirmasi Google menolak upload: `Service Accounts do not have storage quota`. Pilihan otomatis sebelumnya selalu mengambil provider `used_bytes` terkecil, sehingga Google yang gagal terus dipilih walau Mega bekerja. Preflight sekarang melewati Google service account tanpa Shared Drive, konfigurasi tidak lengkap, kapasitas penuh, dan Telegram terlalu besar. Pilihan manual tetap dihormati; tidak ada retry setelah pengiriman dimulai.
+- Hash password akun memakai scrypt dengan migrasi SHA256 saat login; verifikasi async dilindungi dari perubahan password/status bersamaan. Pembatasan autentikasi, validasi body/folder/retensi, pembatasan konten aktif unggahan, pengecekan file kedaluwarsa, serta URL share lama diperbaiki.
+- Tab File/CDN memperbarui judul/ringkasan/ARIA; folder dan breadcrumb dapat dioperasikan dengan keyboard. Aksi mobile minimal 44px; berkas drag-and-drop terlihat dan dapat diganti; ukuran GB/TB ditampilkan benar.
+- Script Nginx menyimpan backup di `/var/backups/gutok-nginx`, bukan `sites-enabled/*` yang membuat blok server termuat dua kali; kegagalan backup menghentikan perubahan. Gzip mencakup `text/javascript` Express 5 dan diperiksa melalui Nginx, bukan port Express.
+- Koreksi review: limiter terpisah per akun/rute, preview hanya format inline yang diizinkan server, kapasitas cache dilepas setelah penghapusan remote berhasil.
+- Regresi ditambahkan pada `uji/keamanan.mjs`, `uji/pilihan-upload.mjs`, `uji/ui-regresi.mjs`, dan `uji/nginx-backup.py`; fixture browser lokal memakai database sementara dan provider tiruan. Lihat README sebelum upgrade/rollback karena hash scrypt tidak didukung kode lama.
+
 1. **package.json**: dependency `"20": "^3.1.9"` bukan package asli, bikin `npm install`/`npm ci` gagal. Dihapus, diganti `engines.node: >=20`. `package-lock.json` sudah di-regenerate biar sinkron.
 2. **assets/styles.css**: logo minta `/image/logo.jpg` yang gak pernah ada (file aslinya di root assets). Diganti `/logo.jpg` → logo tampil.
 3. **ecosystem.config.cjs**: `STORAGE_CONFIG_KEY` dan `MAX_FILE_SIZE` gak ada di `env`. PM2 pakai env dari file ini secara eksklusif saat start/restart — kalau sebelumnya kamu jalanin `npm start` manual pakai secret custom lalu pindah ke PM2, key balik ke default dan **semua config provider yang udah terenkripsi jadi gak bisa didekrip lagi**. Sudah ditambahkan, WAJIB kamu isi manual dengan secret yang sama persis dengan yang dipakai saat setup pertama kali.

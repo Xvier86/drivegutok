@@ -335,7 +335,11 @@ kasus_deploy_nginx() {
   # justru root, sehingga perbaikan Nginx tidak pernah jalan kalau deploy memakai sudo bersandi.
   # Diuji lewat user namespace (root semu) dengan konfigurasi tetap di fixture, bukan /etc/nginx.
   if unshare -r true 2>/dev/null; then
-    unshare -r env NGINX_CONF="$NGINX_UJI/gutokdrive.world" DOMAIN=gutokdrive.world PORT=3000 \
+    # Jangan pernah menguji/reload Nginx mesin asli; kegagalan stub menguji rollback fixture.
+    printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/nginx"
+    chmod +x "$BIN/nginx"
+    unshare -r env PATH="$BIN:$PATH" BACKUP_DIR="$KERJA/nginx-backups" \
+      NGINX_CONF="$NGINX_UJI/gutokdrive.world" DOMAIN=gutokdrive.world PORT=3000 \
       bash "$DIR_SCRIPT_INPUT/vps-nginx.sh" >"$KERJA/nginx-root.log" 2>&1
     cek_tidak_ada "uid 0: tidak ditolak 'Butuh root'" "Butuh root" "$KERJA/nginx-root.log"
     cek_ada "uid 0: script lanjut memeriksa konfigurasi" "Batas upload Nginx Gutok Drive" "$KERJA/nginx-root.log"

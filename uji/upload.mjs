@@ -10,7 +10,7 @@ const uji = new URL('../assets/.probe-upload.mjs', import.meta.url);
 fs.writeFileSync(uji, `${fs.readFileSync(berkas, 'utf8')}\nglobalThis.__api = api;\n`);
 
 const el = new Proxy(function () {}, { get: () => el, set: () => true, apply: () => el, has: () => true });
-for (const nama of ['document', 'window', 'location', 'localStorage', 'sessionStorage', 'navigator', 'lucide', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver', 'getComputedStyle', 'matchMedia', 'alert', 'confirm', 'prompt', 'history', 'screen', 'requestAnimationFrame', 'cancelAnimationFrame', 'FileReader', 'Image', 'XMLHttpRequest', 'ClipboardItem']) globalThis[nama] = el;
+for (const nama of ['document', 'window', 'location', 'localStorage', 'sessionStorage', 'navigator', 'lucide', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver', 'getComputedStyle', 'matchMedia', 'alert', 'confirm', 'prompt', 'history', 'screen', 'requestAnimationFrame', 'cancelAnimationFrame', 'FileReader', 'Image', 'XMLHttpRequest', 'ClipboardItem']) Object.defineProperty(globalThis, nama, { value: el, configurable: true, writable: true });
 globalThis.fetch = async () => ({ ok: true, status: 200, headers: new Map([['content-type', 'application/json']]), json: async () => ({}) });
 process.on('unhandledRejection', () => {});
 

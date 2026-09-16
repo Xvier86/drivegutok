@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 // DOM tiruan serba bisa. #app menangkap innerHTML supaya isi tiap layar bisa diperiksa:
 // kesalahan template (kelas hilang, ikon salah) tidak terlihat dari pemanggilan fungsi saja.
 const el = new Proxy(function () {}, { get: () => el, set: () => true, apply: () => el, has: () => true, construct: () => el });
-for (const nama of ['window', 'location', 'localStorage', 'sessionStorage', 'navigator', 'lucide', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver', 'getComputedStyle', 'matchMedia', 'alert', 'confirm', 'prompt', 'history', 'screen', 'requestAnimationFrame', 'cancelAnimationFrame', 'FileReader', 'Image', 'XMLHttpRequest']) globalThis[nama] = el;
+for (const nama of ['window', 'location', 'localStorage', 'sessionStorage', 'navigator', 'lucide', 'MutationObserver', 'ResizeObserver', 'IntersectionObserver', 'getComputedStyle', 'matchMedia', 'alert', 'confirm', 'prompt', 'history', 'screen', 'requestAnimationFrame', 'cancelAnimationFrame', 'FileReader', 'Image', 'XMLHttpRequest']) Object.defineProperty(globalThis, nama, { value: el, configurable: true, writable: true });
 let layar = '';
 const app = new Proxy({}, { get: (_t, kunci) => (kunci === 'innerHTML' ? layar : el), set: (_t, kunci, nilai) => { if (kunci === 'innerHTML') layar = nilai; return true; } });
 globalThis.document = new Proxy(el, { get: (_t, kunci) => (kunci === 'querySelector' ? (pemilih) => (pemilih === '#app' ? app : el) : el) });
@@ -144,7 +144,7 @@ else { console.error('  GAGAL  FAB berada di dalam .app-shell (fixed ikut menggu
 const sumberFiles = readFileSync(new URL('../assets/js/views/files.js', import.meta.url), 'utf8');
 const sumberTrash = readFileSync(new URL('../assets/js/views/trash.js', import.meta.url), 'utf8');
 const LABEL_AKAR = [
-  [dasbor.includes('<span class="crumb" data-folder="">Penyimpanan</span>'), 'breadcrumb akar'],
+  [/<button\b[^>]*class="crumb"[^>]*data-folder=""[^>]*>Penyimpanan<\/button>/.test(dasbor), 'breadcrumb akar'],
   [sumberFiles.includes(": 'Penyimpanan'}</h1>"), 'judul halaman akar'],
   [sumberFiles.includes('<option value="">Penyimpanan (root)</option>'), 'tujuan pindah (root)'],
 ];

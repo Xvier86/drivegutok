@@ -25,6 +25,7 @@ MIN_BODY="${MIN_BODY:-5G}"
 APP_DIR="${APP_DIR:-/var/www/gutok-drive}"
 PUBLIK="${PUBLIK:-https://$DOMAIN}"
 NGINX_CONF="${NGINX_CONF:-}"
+BACKUP_DIR="${BACKUP_DIR:-/var/backups/gutok-nginx}"
 DRY="${DRY:-0}"
 KERJA="$(mktemp -d)"
 GAGAL=0
@@ -68,6 +69,7 @@ ok "konfigurasi: $NGINX_CONF"
 AWAL=$(grep -oE 'client_max_body_size[^;]*;' "$NGINX_CONF" | head -1 || true)
 PERLU_CMB=1; grep -q 'client_max_body_size' "$NGINX_CONF" && PERLU_CMB=0
 PERLU_GZIP=1; grep -qE '^[[:space:]]*gzip[[:space:]]+on' "$NGINX_CONF" && PERLU_GZIP=0
+PERLU_GT=1; grep -qE '^[[:space:]]*gzip_types[[:space:]]' "$NGINX_CONF" && PERLU_GT=0
 # Buffering diuji per direktif, bukan sekali jalan: pola lama `grep 'proxy_buffering'` tidak cocok
 # dengan `proxy_request_buffering`, jadi konfigurasi yang sudah punya `proxy_request_buffering off`
 # tetap dianggap "belum ada" dan kedua direktif itu disisipkan lagi -> duplikat dalam satu blok ->
@@ -104,19 +106,28 @@ else
   cp "$KERJA/1.conf" "$KERJA/1b.conf"
 fi
 
-awk -v min="$MIN_BODY" -v perlu_cmb="$PERLU_CMB" -v perlu_gzip="$PERLU_GZIP" -v perlu_rb="$PERLU_RB" -v perlu_pb="$PERLU_PB" -v perlu_to="$PERLU_TO" -v port="$PORT" '
+awk -v min="$MIN_BODY" -v perlu_cmb="$PERLU_CMB" -v perlu_gzip="$PERLU_GZIP" -v perlu_gt="$PERLU_GT" -v perlu_rb="$PERLU_RB" -v perlu_pb="$PERLU_PB" -v perlu_to="$PERLU_TO" -v port="$PORT" '
+  BEGIN { types = "    gzip_types text/css text/javascript application/javascript application/json image/svg+xml;" }
+  # Express 5 mengirim text/javascript. Perbarui juga daftar gzip_types yang sudah terpasang.
+  /^[[:space:]]*gzip_types[[:space:]]/ {
+    while ($0 !~ /;/ && (getline baris) > 0) $0 = $0 "\n" baris
+    directive = $0; sub(/[#;].*$/, "", directive)
+    if (directive !~ /[[:space:]](text\/javascript|\*)([[:space:];]|$)/)
+      sub(/gzip_types[[:space:]]+/, "gzip_types text/javascript ")
+  }
   { print }
+  perlu_gt == 1 && $0 ~ /^[[:space:]]*gzip[[:space:]]+on/ { print types }
   perlu_cmb == 1 && $0 ~ /^[[:space:]]*server[[:space:]]*\{[[:space:]]*$/ {
     print "    client_max_body_size " min ";"
     if (perlu_gzip == 1) {
       print "    gzip on;"
-      print "    gzip_types text/css application/javascript application/json image/svg+xml;"
+      if (perlu_gt == 1) print types
       print "    gzip_min_length 1024;"
     }
   }
   perlu_cmb == 0 && perlu_gzip == 1 && $0 ~ /client_max_body_size/ {
     print "    gzip on;"
-    print "    gzip_types text/css application/javascript application/json image/svg+xml;"
+    if (perlu_gt == 1) print types
     print "    gzip_min_length 1024;"
   }
   (perlu_rb == 1 || perlu_pb == 1 || perlu_to == 1) && $0 ~ ("proxy_pass[[:space:]]+http://127\\.0\\.0\\.1:" port) {
@@ -145,9 +156,13 @@ if [ "$DRY" = "1" ]; then
 fi
 
 # --- 3) Pasang + uji + reload ---------------------------------------------------
-BAK="$NGINX_CONF.bak-$(date +%F-%H%M%S)"
-$SUDO cp "$NGINX_CONF" "$BAK"
-$SUDO cp "$KERJA/baru.conf" "$NGINX_CONF"
+# sites-enabled/* juga memuat *.bak; simpan cadangan di luar direktori include Nginx.
+BAK="$BACKUP_DIR/$(basename "$NGINX_CONF").bak-$(date +%F-%H%M%S-%N)"
+if ! $SUDO mkdir -p "$BACKUP_DIR" || ! $SUDO cp -pL "$NGINX_CONF" "$BAK"; then
+  bad "cadangan gagal dibuat: $BAK — konfigurasi tidak diubah"
+  exit 1
+fi
+$SUDO cp "$KERJA/baru.conf" "$NGINX_CONF" || exit 1
 if ! $SUDO nginx -t >"$KERJA/nginx-t.log" 2>&1; then
   bad "nginx -t GAGAL — konfigurasi dikembalikan dari $BAK"
   tail -5 "$KERJA/nginx-t.log" | sed 's/^/   | /'
@@ -206,7 +221,7 @@ else
   bad "nginx -T belum menunjukkan proxy_read_timeout 3600 — unggahan >60 detik masih bisa dijawab 502 oleh Nginx"
 fi
 
-ENKODING=$(curl -sS -o /dev/null -D - -H 'Accept-Encoding: gzip' "http://127.0.0.1:$PORT/styles/components.css" 2>/dev/null | grep -i '^content-encoding' | head -1 || true)
+ENKODING=$(curl -sS -o /dev/null -D - -H 'Accept-Encoding: gzip' -H "Host: $DOMAIN" "http://127.0.0.1/styles/components.css" 2>/dev/null | grep -i '^content-encoding' | head -1 || true)
 if [ -n "$ENKODING" ]; then ok "gzip aktif: $ENKODING"; else info "respons CSS tanpa content-encoding lewat Nginx (gzip belum aktif di blok ini)."; fi
 
 if [ -d "$APP_DIR" ]; then
