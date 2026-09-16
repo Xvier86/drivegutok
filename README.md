@@ -321,6 +321,9 @@ Kredensial yang salah atau akun yang diblokir tampil apa adanya di badge provide
 
 ## 9. Fitur Upload
 
+- **Upload folder** membuka pemilih folder native. Folder utama dan subfolder berisi file dibuat di lokasi yang sedang dibuka; nama file kembar di subfolder berbeda tetap terpisah.
+- Seret folder/file sekaligus ke area upload. Browser yang tidak dapat membaca direktori memberi pesan untuk memakai tombol pemilih; folder tidak diratakan diam-diam.
+- Folder kosong tidak ikut diunggah. Tiap batch membuat pohon folder baru, bukan menggabungkan nama yang sama. Upload parsial mempertahankan file yang berhasil dan menampilkan kegagalan; tidak mencoba ulang otomatis.
 - Owner dapat memilih provider upload.
 - User biasa memakai provider aktif secara otomatis.
 - Upload CDN hanya menerima gambar/video maksimal 5 MB.
