@@ -39,5 +39,5 @@ const GAMBAR = {
 export function icon(nama, ukuran = 17) {
   const dalam = GAMBAR[nama];
   if (!dalam) return '';
-  return `<svg class="ikon" width="${ukuran}" height="${ukuran}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${dalam}</svg>`;
+  return `<svg class="ikon" width="${ukuran}" height="${ukuran}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${dalam}</svg>`;
 }

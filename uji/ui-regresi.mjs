@@ -14,6 +14,10 @@ const element = (attributes = {}) => ({
   focus() { document.activeElement = this; },
   click() { return this.onclick?.({ target: this, preventDefault() {}, stopPropagation() {} }); },
   closest() { return null; },
+  querySelector(selector) { return selector === 'h2' ? [...nodes.values()].find(node => node.tagName === 'H2') : null; },
+  showModal() { this.open = true; },
+  close() { this.open = false; },
+  remove() { nodes.delete(this.id); },
 });
 let markup = '';
 const app = element();
@@ -60,6 +64,7 @@ const render = async () => { await renderDashboard(); bindDashboard(); };
 rute.dashboard = render;
 
 await render();
+assert.equal(typeof document.querySelector('#dropzone').onclick, 'function', 'dropzone juga membuka pemilih lewat keyboard/klik');
 const panel = document.querySelector('.files-panel');
 const fileTab = document.querySelector('#tab-file');
 const cdnTab = document.querySelector('#tab-cdn');
@@ -179,3 +184,251 @@ for (const cdn_enabled of [0, 1]) for (const [mime_type, expected] of previewTyp
 }
 assert.deepEqual(previews, [0, 1].flatMap(cdn_enabled => previewTypes.map(([mime_type, rendered]) => ({ mime_type, cdn_enabled, rendered }))));
 console.log('  ok  preview cocok dengan allowlist server; JSON/JS/XML/HTML memakai download');
+
+// Native dialogs: modal state, Escape, accessible name, focus returned to opener.
+const core = await import('../assets/js/core.js');
+assert.equal(typeof core.openDialog, 'function', 'dialog harus dibuka lewat helper native');
+assert.equal(typeof core.closeDialog, 'function');
+const opener = element(); opener.isConnected = true; opener.focus();
+const heading = element();
+const dialog = element({ id: 'dialog-test' });
+dialog.querySelector = () => heading;
+dialog.querySelectorAll = () => [];
+dialog.showModal = () => { dialog.open = true; };
+dialog.close = () => { dialog.open = false; };
+dialog.remove = () => { nodes.delete('dialog-test'); };
+nodes.set('dialog-test', dialog);
+core.openDialog('dialog-test');
+assert.equal(dialog.open, true);
+assert.equal(dialog.getAttribute('aria-labelledby'), heading.id);
+let cancelPrevented = false;
+dialog.oncancel({ preventDefault() { cancelPrevented = true; } });
+assert.equal(cancelPrevented, true);
+assert.equal(nodes.has('dialog-test'), false);
+assert.equal(document.activeElement, opener);
+console.log('  ok  dialog native: modal, nama aksesibel, Escape, fokus kembali');
+
+// Share configuration is a form, not blocking prompts; payload remains unchanged.
+const { shareFile } = await import('../assets/js/views/files.js');
+globalThis.prompt = () => { throw new Error('Share tidak boleh memakai prompt browser'); };
+globalThis.location = { origin: 'http://localhost' };
+const insert = document.body.insertAdjacentHTML;
+document.body.insertAdjacentHTML = function (position, html) {
+  insert(position, html);
+  const contents = new Map(nodes);
+  for (const node of nodes.values()) {
+    node.querySelector = (selector) => selector === 'h2' ? [...contents.values()].find(item => item.tagName === 'H2') : [...contents.values()].find(item => matches(item, selector)) || null;
+    node.showModal = () => { node.open = true; };
+    node.close = () => { node.open = false; };
+    node.remove = () => { if (node.tagName === 'DIALOG') for (const [id, item] of contents) { if (nodes.get(id) === item) nodes.delete(id); } };
+    node.reportValidity = () => true;
+    if (node.tagName === 'INPUT') node.value = node.attributes.value || '';
+  }
+};
+await shareFile('f-share', '<private>.pdf', '');
+assert.ok(document.querySelector('#share-form'));
+assert.ok(markup.includes('&lt;private&gt;.pdf'));
+const passwordField = document.querySelector('#share-password');
+assert.equal(passwordField.getAttribute('type'), 'password');
+passwordField.value = '  access-test  ';
+document.querySelector('#share-days').value = '2';
+let shareRequest;
+globalThis.fetch = async (url, options) => { shareRequest = { url, body: JSON.parse(options.body) }; return { ok: true, status: 200, headers: new Map([['content-type', 'application/json']]), json: async () => ({ url: '/share/test', expiresAt: '2026-01-01T00:00:00Z' }) }; };
+const beforeShare = Date.now();
+await document.querySelector('#share-form').onsubmit({ preventDefault() {}, currentTarget: document.querySelector('#share-form') });
+assert.equal(shareRequest.url, '/api/files/f-share/share');
+assert.equal(shareRequest.body.password, 'access-test');
+assert.ok(Math.abs(new Date(shareRequest.body.expiresAt).getTime() - beforeShare - 2 * 86400000) < 1000);
+assert.match(document.querySelector('#share-link').value, /\?password=access-test$/);
+await shareFile('f-share', 'private.pdf', '');
+document.querySelector('#share-password').value = '';
+document.querySelector('#share-days').value = '';
+await document.querySelector('#share-form').onsubmit({ preventDefault() {}, currentTarget: document.querySelector('#share-form') });
+assert.deepEqual(shareRequest.body, {}, 'tanpa sandi/masa berlaku tidak mengirim nilai buatan');
+console.log('  ok  share: formulir, escaping, password/expiry payload, link, tanpa batas');
+
+// Rename preserves both PATCH contracts and validates without closing on failure.
+const { renameFile, renameFolder } = await import('../assets/js/views/files.js');
+for (const [rename, kind] of [[renameFile, 'files'], [renameFolder, 'folders']]) {
+  await rename('rename-id', 'Nama lama');
+  assert.ok(document.querySelector('#rename-form'));
+  assert.equal(document.querySelector('#rename-name').value, 'Nama lama');
+  document.querySelector('#rename-name').value = ' ';
+  const previousRequest = shareRequest;
+  await document.querySelector('#rename-form').onsubmit({ preventDefault() {} });
+  assert.equal(shareRequest, previousRequest);
+  assert.match(document.querySelector('#rename-error').textContent, /kosong/);
+  document.querySelector('#rename-name').value = '  Nama baru  ';
+  await document.querySelector('#rename-form').onsubmit({ preventDefault() {} });
+  assert.equal(shareRequest.url, `/api/${kind}/rename-id`);
+  assert.deepEqual(shareRequest.body, { name: 'Nama baru' });
+}
+console.log('  ok  rename file/folder: modal, nama awal, PATCH sama, trim');
+
+let toastOpened = 0;
+let toastClosed = 0;
+toast.showPopover = () => { toastOpened += 1; };
+toast.hidePopover = () => { toastClosed += 1; };
+const originalTimer = globalThis.setTimeout;
+globalThis.setTimeout = (fn) => { fn(); return 0; };
+core.notify('Galat tetap terlihat di atas dialog');
+globalThis.setTimeout = originalTimer;
+assert.equal(toastOpened, 1, 'toast muncul di top layer agar tidak tertutup dialog');
+assert.equal(toastClosed, 1);
+console.log('  ok  notifikasi tampil di atas dialog native');
+
+// Drawer follows the shell's CSS breakpoint, not the viewport's width.
+const base = readFileSync(new URL('../assets/styles/base.css', import.meta.url), 'utf8');
+const drawerBreakpoint = Number(base.match(/@container shell \(max-width: (\d+)px\)/)[1]);
+const bodyClasses = new Set();
+document.body.classList = { add: value => bodyClasses.add(value), remove: value => bodyClasses.delete(value), contains: value => bodyClasses.has(value) };
+const drawerButton = element();
+const drawerScrim = element();
+const drawerNav = element();
+const drawerSidebar = element();
+drawerSidebar.querySelector = () => drawerNav;
+const drawerTopbar = element();
+let drawerInserted = false;
+drawerTopbar.querySelector = () => drawerInserted ? drawerButton : null;
+drawerTopbar.insertAdjacentHTML = () => { drawerInserted = true; };
+const shell = element();
+shell.isConnected = true;
+shell.querySelector = selector => ({ '.topbar': drawerTopbar, '.sidebar': drawerSidebar, '#drawer-scrim': drawerScrim })[selector];
+shell.insertAdjacentHTML = () => {};
+app.querySelector = selector => selector === '.app-shell' ? shell : null;
+let shellWidth = 700;
+let viewportWidth = 700;
+const mediaListeners = [];
+const resizeObservers = [];
+const drawerFrames = [];
+globalThis.requestAnimationFrame = callback => drawerFrames.push(callback);
+const flushDrawerFrame = () => { for (const callback of drawerFrames.splice(0)) callback(); };
+globalThis.matchMedia = query => {
+  const minimum = Number(query.match(/min-width:\s*(\d+)px/)[1]);
+  return { addEventListener(_type, listener) { mediaListeners.push({ minimum, listener, matches: viewportWidth >= minimum }); } };
+};
+globalThis.getComputedStyle = node => {
+  assert.equal(node, drawerButton);
+  return { display: shellWidth <= drawerBreakpoint ? 'inline-flex' : 'none' };
+};
+globalThis.ResizeObserver = class {
+  constructor(callback) { this.callback = callback; resizeObservers.push(this); }
+  observe(target) { this.target = target; }
+  disconnect() { this.target = null; }
+};
+const resizeDrawer = (width, viewport = width) => {
+  shellWidth = width; viewportWidth = viewport;
+  for (const media of mediaListeners) {
+    const matches = viewportWidth >= media.minimum;
+    if (matches !== media.matches) { media.matches = matches; media.listener({ matches }); }
+  }
+  for (const observer of resizeObservers) if (observer.target) observer.callback([{ target: observer.target, contentRect: { width } }]);
+};
+core.pasangDrawer();
+await drawerButton.click();
+assert.equal(bodyClasses.has('is-drawer'), true);
+resizeDrawer(740);
+assert.equal(bodyClasses.has('is-drawer'), true, 'ResizeObserver tidak boleh melepas scroll lock saat delivery');
+assert.equal(drawerButton.getAttribute('aria-expanded'), 'true');
+flushDrawerFrame();
+assert.equal(bodyClasses.has('is-drawer'), false, '700→740: desktop tidak boleh menyisakan scroll lock');
+assert.equal(drawerButton.getAttribute('aria-expanded'), 'false');
+assert.equal(document.activeElement, drawerNav, 'resize tidak memfokuskan tombol tersembunyi');
+resizeDrawer(700, 1000);
+flushDrawerFrame();
+assert.equal(bodyClasses.has('is-drawer'), false, 'kembali sempit tidak membuka drawer lama');
+await drawerButton.click();
+resizeDrawer(720, 1000);
+flushDrawerFrame();
+assert.equal(bodyClasses.has('is-drawer'), true, 'shell 720px tetap mobile meski viewport desktop');
+resizeDrawer(721, 1000);
+flushDrawerFrame();
+assert.equal(bodyClasses.has('is-drawer'), false, 'perubahan container tanpa resize viewport mereset drawer');
+assert.equal(drawerButton.getAttribute('aria-expanded'), 'false');
+resizeDrawer(700);
+flushDrawerFrame();
+await drawerButton.click();
+resizeDrawer(740);
+shell.isConnected = false;
+flushDrawerFrame();
+assert.equal(bodyClasses.has('is-drawer'), true, 'callback tertunda dari shell lama tidak boleh mengubah body');
+assert.equal(drawerButton.getAttribute('aria-expanded'), 'true');
+resizeDrawer(740);
+flushDrawerFrame();
+assert.ok(resizeObservers.every(observer => observer.target === null), 'observer shell terlepas harus disconnect');
+console.log('  ok  drawer: 700/740, batas container 720/721, buka ulang, ARIA, fokus, reset tertunda, cleanup');
+
+// A modal makes helpers appended outside it inert: select/copy must run inside it.
+const { copyText } = await import('../assets/js/views/files.js');
+const querySelector = document.querySelector;
+let activeDialog = element();
+let helper;
+let selectedText = '';
+let copyAllowed = true;
+const appendHelper = function (node) { node.parentElement = this; };
+document.body.appendChild = appendHelper;
+activeDialog.appendChild = appendHelper;
+document.querySelector = selector => selector === 'dialog[open]' ? activeDialog : querySelector(selector);
+document.createElement = tag => {
+  assert.equal(tag, 'textarea');
+  helper = { select() { if (!activeDialog || this.parentElement === activeDialog) selectedText = this.value; }, remove() { this.removed = true; } };
+  return helper;
+};
+document.execCommand = command => { assert.equal(command, 'copy'); return copyAllowed && selectedText !== ''; };
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: async () => { throw new Error('denied'); } } } });
+assert.equal(await copyText('modal link'), true, 'fallback harus bisa memilih teks di dalam modal, bukan body inert');
+assert.equal(selectedText, 'modal link');
+assert.equal(helper.removed, true);
+activeDialog = null; selectedText = '';
+assert.equal(await copyText('body link'), true);
+assert.equal(selectedText, 'body link');
+assert.equal(helper.parentElement, document.body);
+assert.equal(helper.removed, true);
+copyAllowed = false;
+assert.equal(await copyText('manual link'), false);
+assert.equal(helper.removed, true);
+navigator.clipboard = undefined;
+copyAllowed = true;
+assert.equal(await copyText('HTTP link'), true);
+navigator.clipboard = { writeText: async text => { selectedText = text; } };
+helper = null;
+assert.equal(await copyText('native link'), true);
+assert.equal(selectedText, 'native link');
+assert.equal(helper, null, 'Clipboard API berhasil tidak membuat helper');
+document.querySelector = querySelector;
+console.log('  ok  clipboard: modal non-inert, body, API ditolak/tidak tersedia, gagal, cleanup');
+
+// Late share responses belong only to the dialog instance that submitted them.
+const staleShares = [];
+for (const failure of [false, true]) for (const dismissal of ['cancel', 'cancel-reopen', 'escape-reopen', 'replace', 'close']) {
+  await shareFile('file-a', 'A.pdf', '');
+  const initiatingDialog = document.querySelector('#share-modal');
+  document.querySelector('#share-days').value = '';
+  let settle;
+  let pendingRequest;
+  globalThis.fetch = (url, options) => { pendingRequest = { url, options }; return new Promise(resolve => { settle = resolve; }); };
+  const pending = document.querySelector('#share-form').onsubmit({ preventDefault() {} });
+  assert.equal(pendingRequest.url, '/api/files/file-a/share');
+  assert.equal(pendingRequest.options.method, 'POST');
+  assert.equal(pendingRequest.options.body, '{}');
+  if (dismissal.startsWith('cancel')) await document.querySelector('#close-share').click();
+  else if (dismissal.startsWith('escape')) initiatingDialog.oncancel({ preventDefault() {} });
+  else if (dismissal === 'close') initiatingDialog.close();
+  else initiatingDialog.remove();
+  if (dismissal.endsWith('reopen') || dismissal === 'replace') await shareFile('file-b', 'B.pdf', '');
+  const currentDialog = document.querySelector('#share-modal');
+  const currentError = document.querySelector('#share-error');
+  const currentSubmit = document.querySelector('#create-share');
+  const disabledBefore = currentSubmit?.disabled;
+  const previousToast = toast.textContent;
+  settle({ ok: !failure, status: failure ? 400 : 200, headers: new Map([['content-type', 'application/json']]), json: async () => ({ url: '/share/a', error: 'A failed' }) });
+  await pending;
+  staleShares.push({ failure, dismissal, sameDialog: document.querySelector('#share-modal') === currentDialog, error: currentError?.textContent || '', sameSubmit: currentSubmit?.disabled === disabledBefore, sameToast: toast.textContent === previousToast, aborted: pendingRequest.options.signal.aborted });
+}
+assert.deepEqual(staleShares, staleShares.map(({ failure, dismissal }) => ({ failure, dismissal, sameDialog: true, error: '', sameSubmit: true, sameToast: true, aborted: false })), 'respons A tidak boleh menutup/mengubah B atau membuka ulang dialog yang dibatalkan');
+await shareFile('file-a', 'A.pdf', '');
+globalThis.fetch = async () => ({ ok: false, status: 400, headers: new Map([['content-type', 'application/json']]), json: async () => ({ error: 'Current failure' }) });
+await document.querySelector('#share-form').onsubmit({ preventDefault() {} });
+assert.equal(document.querySelector('#share-error').textContent, 'Current failure');
+assert.equal(document.querySelector('#create-share').disabled, false, 'galat aktif tetap mengizinkan coba ulang');
+console.log('  ok  share async: sukses/galat usang diabaikan, B utuh, request tetap berjalan, galat aktif');

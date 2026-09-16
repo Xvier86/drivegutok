@@ -2,12 +2,14 @@
 
 /* Ikon (SVG inline dari assets/js/ikon.js) */
 .ikon { flex: none; }
+:where(.icon-btn) { display: inline-flex; }
 
 /* Tombol */
 .primary, .secondary {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: 44px;
   padding: 10px var(--space-4);
   border-radius: var(--radius);
   border: 1px solid transparent;
@@ -24,15 +26,14 @@
 .primary[disabled], .secondary[disabled] { opacity: 0.55; cursor: not-allowed; }
 
 .icon-btn {
-  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   padding: 0;
-  border: 1px solid var(--line-soft);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--panel-soft);
+  background: transparent;
   color: var(--muted-strong);
   cursor: pointer;
   transition: color var(--motion), border-color var(--motion), background var(--motion);
@@ -42,6 +43,7 @@
 .icon-btn.danger:hover { color: var(--danger); border-color: var(--danger); }
 
 .side-link {
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -56,9 +58,10 @@
 .side-link:hover { color: var(--gold-bright); border-color: var(--gold-dark); }
 
 /* Kolom isian */
-.field { display: grid; gap: var(--space-2); margin-bottom: var(--space-3); }
-.field label { color: var(--muted); font-size: var(--fs-sm); }
+.field { display: grid; gap: var(--space-2); margin-bottom: var(--space-5); min-width: 0; }
+.field label { color: var(--muted-strong); font-size: var(--fs-md); font-weight: 500; }
 input, select, textarea {
+  min-height: 44px;
   width: 100%;
   padding: 10px var(--space-3);
   border: 1px solid var(--line);
@@ -67,10 +70,14 @@ input, select, textarea {
   color: var(--paper);
   font: inherit;
 }
-input[type="checkbox"] { width: auto; }
+input[type="checkbox"] { width: 20px; min-height: 20px; accent-color: var(--gold); }
+input[type="file"] { padding: var(--space-3); font-size: var(--fs-md); }
+input::file-selector-button { min-height: 44px; margin-right: var(--space-3); padding-inline: var(--space-3); background: var(--panel-soft); color: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; }
 input:focus, select:focus, textarea:focus { border-color: var(--gold); }
-.encrypt-option { display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); font-size: var(--fs-md); }
-.provider-picker { display: grid; gap: var(--space-1); min-width: 180px; color: var(--muted); font-size: var(--fs-xs); }
+.encrypt-option { min-height: 44px; display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); font-size: var(--fs-md); }
+.provider-picker { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; min-width: 180px; color: var(--muted); font-size: var(--fs-xs); }
+
+.provider-picker select { width: auto; max-width: 16rem; }
 
 /* Panel */
 .panel {
@@ -97,21 +104,24 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
-  padding: 8px var(--space-3);
+  min-height: 78px;
+  padding: var(--space-3);
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-bottom-color: var(--line-soft);
+  border-radius: 0;
   background: transparent;
   cursor: pointer;
   transition: background var(--motion), border-color var(--motion);
 }
-.file-card:hover { background: var(--panel-soft); border-color: var(--line-soft); }
+.file-card:hover { background: var(--panel-soft); }
+.file-card:last-child { border-bottom-color: transparent; }
 .file-icon {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 46px;
   border-radius: var(--radius-sm);
-  background: var(--gold-soft);
+  background: var(--ink-soft);
   color: var(--gold);
 }
 .folder-open { grid-column: 1 / 3; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-3); min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
@@ -126,14 +136,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-1);
-  opacity: 0;
+  opacity: 1;
   transition: opacity var(--motion);
 }
 
 /* Baris sementara selama unggah: bilah, kecepatan sesaat, dan persen. Baris masuk dengan rowIn.
    Tombol hapus disembunyikan (bukan dimatikan) karena membatalkan unggahan butuh abort controller —
    lihat deleteFile() di files.js. */
-.file-card.is-uploading { animation: rowIn 280ms var(--motion) both; }
+.file-card.is-uploading { animation: rowIn 220ms var(--ease) both; }
 .file-card.is-uploading .file-delete { visibility: hidden; }
 .upl-meta { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-sm); color: var(--muted); }
 .upl-bar { flex: 1; min-width: 60px; height: 4px; border-radius: var(--radius-pill); background: var(--amber-unlit); overflow: hidden; }
@@ -141,24 +151,24 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .upl-angka, .upl-persen { font-family: var(--f-mono); }
 .upl-persen { color: var(--muted-strong); }
 .badge-selesai { display: none; align-items: center; gap: var(--space-1); color: var(--gold-bright); font-size: var(--fs-sm); }
-.file-card.is-selesai .badge-selesai { display: inline-flex; animation: rowIn 200ms var(--motion) both; }
+.file-card.is-selesai .badge-selesai { display: inline-flex; animation: rowIn 180ms var(--ease) both; }
 .file-card.is-selesai .upl-meta { display: none; }
 
 /* Baris dihapus: meluncur keluar dan tingginya mengempis sebelum DELETE dikirim (lihat deleteFile()).
    max-height awal hanya angka aman — baris file tingginya di bawah 120px. */
-.file-card.removing { max-height: 120px; overflow: hidden; pointer-events: none; animation: rowKeluar 300ms var(--motion) forwards; }
+.file-card.removing { min-height: 0; max-height: 180px; overflow: hidden; pointer-events: none; animation: rowKeluar 200ms var(--ease) forwards; }
 
 @keyframes rowIn { from { opacity: 0; transform: translateY(6px); } }
 
 @keyframes rowKeluar { to { opacity: 0; transform: scale(0.96) translateX(28px); max-height: 0; padding-top: 0; padding-bottom: 0; } }
 
 /* Provider, status, dan angka */
-.provider { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
+.provider { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
 .provider:last-child { border-bottom: 0; }
 .provider-row { padding: var(--space-4) 0; }
 .provider-name { display: flex; align-items: center; gap: var(--space-2); font-weight: 500; }
 .provider-meta { color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
-.provider-mini { display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); font-size: var(--fs-sm); }
+.provider-mini { overflow-wrap: anywhere; display: flex; align-items: center; gap: var(--space-2); color: var(--muted-strong); font-size: var(--fs-sm); }
 .member-access { flex: none; }
 /* Dot status provider/member: amber = aktif, abu = nonaktif, merah redup = belum siap atau kuota
    gagal dibaca. Tiga keadaan, tiga warna — bukan tiga kartu yang tampak sama. */
@@ -171,7 +181,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
    dibuka, dan baris teks yang menua di header. Sekarang tiga batang berdenyut bergantian: penanda
    "server hidup" tanpa teks. Angkanya tetap dibaca pembaca layar lewat aria-label #server-status. */
 .server-status { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
-.server-status i { width: 3px; height: 100%; border-radius: var(--radius-pill); background: var(--amber-glow); animation: denyut-status 1.2s var(--motion) infinite; }
+.server-status i { width: 3px; height: 100%; border-radius: var(--radius-pill); background: var(--amber-glow); animation: denyut-status 1.2s var(--ease) infinite; }
 .server-status i:nth-child(2) { animation-delay: 0.15s; }
 .server-status i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes denyut-status { 0%, 100% { transform: scaleY(0.3); opacity: 0.45; } 50% { transform: scaleY(1); opacity: 1; } }
@@ -179,33 +189,45 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 /* Chip akun di header: satu-satunya jalan masuk ke Pengaturan akun (klik chip → #/akun lewat
    delegasi di app.js). Elemennya <button>, jadi reset tampilan tombol bawaan browser harus eksplisit —
    tanpa ini chip tampil sebagai kotak abu-abu bawaan, bukan seperti bagian header. */
-.user-menu { display: flex; align-items: center; gap: var(--space-2); padding: 4px 6px; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: inherit; font: inherit; text-align: inherit; cursor: pointer; transition: border-color var(--motion), background var(--motion); }
+.user-menu { min-width: 0; max-width: 100%; display: flex; align-items: center; gap: var(--space-2); padding: 4px 6px; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: inherit; font: inherit; text-align: inherit; cursor: pointer; transition: border-color var(--motion), background var(--motion); }
 .user-menu:hover { border-color: var(--line); background: var(--panel-soft); }
 .user-menu small { display: block; color: var(--muted); }
+.user-menu .text-right { min-width: 0; }
+.user-menu strong { display: block; max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { overflow-wrap: anywhere; }
 
 .breadcrumb { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); }
-.breadcrumb .crumb { background: none; border: 0; padding: 0; color: var(--muted-strong); font: inherit; cursor: pointer; }
+.breadcrumb .crumb { min-height: 44px; background: none; border: 0; padding: 4px; max-width: 100%; overflow-wrap: anywhere; color: var(--muted-strong); font: inherit; cursor: pointer; }
 .breadcrumb .crumb.current { color: var(--gold-bright); cursor: default; }
 
 /* Sampah */
 .trash-list { display: grid; gap: var(--space-3); }
-.trash-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--panel-soft); min-width: 0; }
+.trash-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--line-soft); border-radius: 0; background: transparent; min-width: 0; }
 .trash-info { flex: 1; min-width: 0; }
 .trash-actions { display: flex; gap: var(--space-1); flex: none; }
 
 /* Modal dan pratinjau */
-.modal-backdrop { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: var(--space-4); background: rgba(9, 8, 5, 0.72); }
-.modal { width: min(560px, 100%); max-height: 90vh; overflow: auto; padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow); }
-.modal h2 { margin-bottom: var(--space-4); }
-.modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-5); }
-.preview-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
-.media-preview, .media-frame { width: 100%; max-height: 60vh; border: 0; border-radius: var(--radius); background: var(--ink); }
+.modal { width: min(560px, calc(100% - 2rem)); max-height: min(90dvh, 60rem); margin: auto; overflow: auto; padding: var(--space-6); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); color: var(--paper); box-shadow: var(--shadow); }
+.modal::backdrop { background: rgba(10, 8, 6, 0.8); }
+.modal[open] { animation: dialog-in 180ms ease-out both; }
+.modal h2 { margin-bottom: var(--space-5); font-size: var(--fs-title); overflow-wrap: anywhere; }
+.modal > .subtle { margin-bottom: var(--space-5); }
+.modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--line-soft); }
+.preview-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-5); }
+.dialog-context { display: flex; align-items: center; gap: var(--space-3); color: var(--muted-strong); padding-bottom: var(--space-5); margin-bottom: var(--space-5); border-bottom: 1px solid var(--line-soft); overflow-wrap: anywhere; }
+#media-modal { width: min(1000px, calc(100% - 2rem)); }
+.media-preview, .media-frame { display: block; width: 100%; max-height: 64dvh; object-fit: contain; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--ink); }
+.media-frame { height: 62dvh; }
 .media-audio { width: 100%; }
-.media-empty { padding: var(--space-5); border-radius: var(--radius); background: var(--ink-soft); color: var(--muted); text-align: center; }
+.media-empty { padding: var(--space-7); border-radius: var(--radius); background: var(--ink-soft); color: var(--muted); text-align: center; }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(8px) scale(0.99); } }
 
 /* Toast dan pemuatan */
 .toast {
   position: fixed;
+  inset: auto;
+  margin: 0;
+  width: max-content;
   left: 50%;
   bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
   z-index: 60;
@@ -232,26 +254,26 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
    atau status per provider di sini — rincian itu hanya ada di Owner control. Busur digambar dengan
    stroke-dasharray dalam persen (pathLength="100" di markup), jadi tanpa JS pun busurnya sudah
    benar. Tanpa box-shadow: pemisahan bagian hanya lewat hairline --line dan warna busur. */
-.storage-card { display: grid; gap: var(--space-3); border-color: var(--line); }
-.storage-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.storage-card { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2); border-color: var(--line); background: transparent; }
+.storage-head { grid-column: 1; display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
 .storage-label { font-family: var(--font-display); font-size: var(--fs-md); color: var(--muted-strong); }
-.storage-readout { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
-.storage-isi { font-family: var(--f-mono); font-size: var(--fs-xl); color: var(--paper); }
+.storage-readout { grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.storage-isi { font-family: var(--f-mono); font-size: var(--fs-md); color: var(--paper); }
 .storage-dari { font-size: var(--fs-xs); color: var(--muted); }
 .storage-total { font-family: var(--f-mono); color: var(--muted-strong); }
 /* Lingkaran: jalur penuh selalu terlihat (--amber-unlit), busur terpakai menimpanya (--amber-glow).
    grid + place-items supaya angka persen tepat di tengah tanpa position: absolute. -90deg membuat
    busur mulai dari puncak, bukan dari jam tiga. */
-.storage-ring { display: grid; place-items: center; }
+.storage-ring { grid-column: 2; grid-row: 1 / 3; display: grid; place-items: center; width: 54px; }
 .storage-ring-svg { grid-area: 1 / 1; width: 100%; max-width: 132px; transform: rotate(-90deg); }
 .ring-jalur { fill: none; stroke: var(--amber-unlit); stroke-width: 4; }
 .ring-isi { fill: none; stroke: var(--amber-glow); stroke-width: 4; stroke-linecap: round; }
-.storage-pct { grid-area: 1 / 1; font-family: var(--f-mono); font-size: var(--fs-lg); color: var(--amber-glow); }
+.storage-pct { grid-area: 1 / 1; font-family: var(--f-mono); font-size: var(--fs-xs); color: var(--amber-glow); }
 /* Animasi masuk hanya dipasang kalau JS menambahkan .is-anim: tanpa itu (reduced-motion, atau
    render ulang) busur dan persentase sudah dalam keadaan final, jadi tidak ada kedipan. Persentase
    menyusul setelah busur selesai supaya angka tidak terbaca sebelum busurnya bergerak. */
-.storage-ring.is-anim .ring-isi { animation: isi-lingkaran 900ms var(--motion) both; }
-.storage-card.is-anim .storage-pct { animation: muncul-persen 340ms var(--motion) both; animation-delay: 700ms; }
+.storage-ring.is-anim .ring-isi { animation: isi-lingkaran 900ms var(--ease) both; }
+.storage-card.is-anim .storage-pct { animation: muncul-persen 340ms var(--ease) both; animation-delay: 700ms; }
 
 @keyframes isi-lingkaran { from { stroke-dasharray: 0 100; } }
 
@@ -262,7 +284,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
    bukan bayangan atau border yang sama untuk semua kartu. */
 .provider-list, .member-list { display: grid; }
 .provider-id { display: grid; gap: var(--space-1); min-width: 0; }
-.provider-aksi { flex: none; }
+.provider-aksi { flex: none; margin-left: auto; }
 .member-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--line-soft); }
 .member-row:last-child { border-bottom: 0; }
 .member-id { display: grid; gap: 1px; flex: 1 1 12rem; min-width: 0; }
@@ -279,7 +301,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 
 /* Tombol ghost: satu gaya untuk semua aksi sekunder di Owner control (Konfigurasi/Nonaktifkan/
    Cabut akses), supaya tidak ada campuran solid dan outline yang tidak konsisten. */
-.ghost { display: inline-flex; align-items: center; gap: var(--space-2); padding: 6px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted-strong); font: inherit; font-size: var(--fs-md); cursor: pointer; transition: color var(--motion), border-color var(--motion), background var(--motion); }
+.ghost { min-height: 44px; display: inline-flex; align-items: center; gap: var(--space-2); padding: 6px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted-strong); font: inherit; font-size: var(--fs-md); cursor: pointer; transition: color var(--motion), border-color var(--motion), background var(--motion); }
 .ghost:hover { border-color: var(--line); background: var(--panel); color: var(--paper); }
 .ghost.danger:hover { border-color: var(--danger); color: var(--danger); }
 
@@ -302,39 +324,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .file-card:focus-within .card-actions { opacity: 1; transform: none; }
 @media (hover: none) { .card-actions { opacity: 1; transform: none; } }
 
-.dropzone {
-  margin-top: var(--space-3);
-  padding: var(--space-4);
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-  color: var(--muted);
-  text-align: center;
-  font-size: var(--fs-md);
-}
-.dropzone.drag { border-color: var(--gold); color: var(--gold-bright); background: var(--gold-soft); }
-
-/* Tombol Unggah mengapung di kanan bawah: aksi utama yang selalu terjangkau, jadi toolbar cukup
-   menyisakan Folder baru dan Upload CDN. Radius penuh + bayangan amber supaya terlihat sebagai
-   tombol aksi, bukan sekadar ikon. Markup-nya sengaja DI LUAR .app-shell: containment dari
-   `container-type` membuat `position: fixed` di dalamnya ikut menggulir, jadi FAB akan hilang
-   dari sudut layar saat halaman digulir. */
-.fab {
-  position: fixed;
-  right: calc(var(--space-5) + env(safe-area-inset-right, 0px));
-  bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
-  z-index: 30;
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  padding: 0;
-  border: 1px solid var(--gold-bright);
-  border-radius: var(--radius-pill);
-  background: var(--gold);
-  color: var(--ink);
-  box-shadow: 0 12px 26px rgba(231, 185, 63, 0.32);
-  cursor: pointer;
-  transition: background var(--motion), transform var(--motion);
-}
+.dropzone { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-5); width: 100%; min-height: 100px; border: 1px dashed var(--line); border-radius: var(--radius); background: transparent; color: var(--muted-strong); text-align: left; font: inherit; cursor: pointer; transition: border-color var(--motion), background var(--motion); }
+.dropzone .ikon { color: var(--gold); }
+.dropzone strong { display: block; color: var(--paper); font-weight: 500; }
+.dropzone small { display: block; color: var(--muted); margin-top: var(--space-1); font-size: var(--fs-sm); }
+.dropzone:hover, .dropzone.drag { border-color: var(--gold); background: var(--gold-soft); }
+.fab { position: fixed; right: calc(var(--gutter) + env(safe-area-inset-right, 0px)); bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px)); z-index: 30; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-width: 56px; height: 52px; padding: 0 var(--space-5); border: 1px solid var(--gold-bright); border-radius: var(--radius); background: var(--gold); color: var(--ink); font: inherit; font-weight: 500; box-shadow: var(--shadow-soft); cursor: pointer; transition: background var(--motion), transform var(--motion); }
 .fab:hover { background: var(--gold-bright); transform: translateY(-2px); }
 .fab:active { transform: translateY(1px); }
+@media (max-width: 767px) {
+  .icon-btn { width: 44px; height: 44px; }
+  .provider-picker { margin-left: 0; width: 100%; }
+ .provider-picker select { flex: 1; max-width: none; }
+  .modal { padding: var(--space-5); }
+  .encrypt-option { align-items: flex-start; }
+}

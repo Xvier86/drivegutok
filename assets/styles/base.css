@@ -1,233 +1,105 @@
-/* Dasar: reset ringan, latar, kerangka aplikasi (sidebar + main), tipografi, aksesibilitas. */
-*,
-*::before,
-*::after { box-sizing: border-box; }
-
+/* Gutok workspace: a persistent rail, one working canvas, warm hairlines. */
+*, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; width: 100%; min-height: 100%; }
-
-body {
-  background: var(--ink-soft);
-  background-image: radial-gradient(1200px 600px at 12% -10%, rgba(231, 185, 63, 0.08), transparent 70%);
-  background-attachment: fixed;
-  color: var(--paper);
-  font-family: var(--font-ui);
-  font-size: var(--fs-body);
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-}
-
-h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; }
+body { background: var(--ink-soft); color: var(--paper); font-family: var(--font-ui); font-size: var(--fs-body); line-height: 1.55; -webkit-font-smoothing: antialiased; }
+body:has(dialog[open]) { overflow: hidden; }
+[hidden] { display: none !important; }
+h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.025em; }
 h2 { font-size: var(--fs-lg); }
 h3 { font-size: var(--fs-body); }
 p { margin: 0; }
 a { color: var(--gold-bright); text-decoration: none; }
 a:hover { text-decoration: underline; }
 img { max-width: 100%; display: block; }
+button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button, a, input, select, textarea { touch-action: manipulation; }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+code { font-family: var(--f-mono); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 3px; border-radius: var(--radius-sm); }
+::selection { background: var(--gold); color: var(--ink); }
 
-:focus-visible {
-  outline: 2px solid var(--gold-bright);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-
-/* Kerangka aplikasi. .app-shell adalah query container: semua breakpoint di bawah memakai lebar
-   panel ini (viewport dikurangi gutter), bukan lebar viewport — sidebar 240-264px membuat panel
-   utama selalu jauh lebih sempit dari layar, jadi breakpoint viewport membuat panel "kelihatan
-   lebar" padahal isinya sudah sempit.
-   Grid-nya flex-wrap, bukan grid-template-columns: sidebar menggulir ke bawah sendiri saat ruang
-   tidak cukup tanpa perlu satu pun media query yang harus disinkronkan dengan container query.
-   min-height 100dvh supaya drawer di layar sempit setinggi layar walau isi halaman pendek. */
 .app-shell {
   position: relative;
   container-type: inline-size;
   container-name: shell;
   display: flex;
-  flex-wrap: wrap;
   align-items: flex-start;
-  gap: var(--space-5);
   width: 100%;
-  max-width: var(--content);
   min-height: 100dvh;
-  margin: 0 auto;
-  padding-block: calc(var(--space-5) + env(safe-area-inset-top, 0px)) calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
-  padding-inline: calc(var(--gutter) + env(safe-area-inset-left, 0px)) calc(var(--gutter) + env(safe-area-inset-right, 0px));
+  padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
 }
-
-/* Tombol hamburger dan scrim drawer: disembunyikan di panel lebar, dimunculkan container query
-   sempit di bawah. Keduanya disisipkan pasangDrawer() (core.js). */
 .drawer-toggle { display: none; }
 .drawer-scrim { display: none; }
-
-/* Scroll dikunci saat drawer terbuka. Wajib: `.app-shell` adalah query container, dan containment
-   membuat `position: fixed` di dalamnya ikut menggulir — jadi drawer memakai `position: absolute`
-   setinggi panel, dan halaman tidak boleh bergulir selama drawer terbuka. */
 body.is-drawer { overflow: hidden; }
-
 .sidebar {
-  flex: 1 1 var(--sidebar);
-  max-width: 100%;
   position: sticky;
-  top: var(--space-5);
+  top: 0;
+  flex: 0 0 var(--sidebar);
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: var(--space-7);
+  min-width: 0;
+  min-height: 100dvh;
   padding: var(--space-5);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, var(--panel), var(--ink-soft));
-  min-width: 0;
+  padding-top: calc(var(--space-5) + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+  background: var(--ink);
+  border-right: 1px solid var(--line-soft);
 }
-
-.sidebar-bottom {
-  margin-top: auto;
-  display: grid;
-  gap: var(--space-2);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--line-soft);
-}
-
-/* Basis 320px: cukup untuk daftar file, tapi masih bisa menyusut (min-width 0) — jadi panel utama
-   tidak pernah memaksa halaman melebar di layar sempit. Angka 999 membuat sisa ruang jatuh ke
-   panel ini, bukan ke sidebar. */
-.main {
-  flex: 999 1 20rem;
-  display: grid;
-  gap: var(--space-4);
-  min-width: 0;
-}
-
-/* Kolom kanan (Owner control) hanya dibuka container query lebar di bawah; di bawahnya satu kolom,
-   supaya tidak ada dua kolom sempit berdampingan yang memaksa scroll horizontal. */
-.layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-4);
-  align-items: start;
-  min-width: 0;
-}
-
-.right-column { display: grid; gap: var(--space-4); min-width: 0; }
+.sidebar-bottom { margin-top: auto; display: grid; gap: var(--space-3); padding-top: var(--space-5); }
+.main { flex: 1; display: grid; align-content: start; gap: var(--space-5); min-width: 0; padding: 0 var(--gutter) var(--space-7); }
+.main > * { min-width: 0; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); min-width: 0; min-height: 88px; padding-block: var(--space-4); border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }
+.topbar-kanan { display: flex; align-items: center; gap: var(--space-4); min-width: 0; margin-left: auto; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); align-items: start; min-width: 0; }
+.right-column { display: grid; gap: var(--space-5); min-width: 0; }
 .files-panel { min-width: 0; }
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-/* Grup kanan topbar: uptime + chip akun. Dipisah dari .topbar supaya `space-between` tidak menaruh
-   chip akun di tengah baris begitu uptime disisipkan runtime (lihat bindUploadOptions). */
-.topbar-kanan {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
 .nav { display: grid; gap: var(--space-1); }
-.nav button {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  padding: 10px var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--muted-strong);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--motion), color var(--motion), border-color var(--motion);
-}
-.nav button:hover { background: var(--gold-soft); color: var(--paper); }
-.nav button.active {
-  background: var(--gold-soft);
-  border-color: var(--gold-dark);
-  color: var(--gold-bright);
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-family: var(--font-display);
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  color: var(--paper);
-}
-.brand span { color: var(--gold); }
-
-.eyebrow {
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
+.nav button { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: 44px; padding: var(--space-2) var(--space-3); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-md); font-weight: 500; text-align: left; cursor: pointer; transition: background var(--motion), color var(--motion); }
+.nav button:hover { background: var(--panel); color: var(--paper); }
+.nav button.active { background: var(--gold-soft); color: var(--gold-bright); }
+.brand { display: flex; align-items: center; gap: var(--space-2); font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 600; letter-spacing: -0.035em; color: var(--paper); white-space: nowrap; }
+.brand span { color: var(--gold); margin-left: -0.25rem; }
+.eyebrow { color: var(--muted); font-size: var(--fs-xs); letter-spacing: 0.04em; }
 .subtle { color: var(--muted); font-size: var(--fs-md); }
 .error { color: var(--danger); font-size: var(--fs-md); }
-
+.error:not(:empty) { margin-block: var(--space-3); }
 .greeting { font-size: var(--fs-display); line-height: 1.2; }
 .greeting-sm { font-size: var(--fs-display); margin-top: var(--space-2); }
-
-/* Kepala tayangan: judul + ringkasan di kiri, kontrol (tab/tombol) di kanan. Dipakai layar file,
-   Sampah, dan Owner control supaya hierarki ketiga layar sama seperti Drive. */
-.view-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-}
-.view-title { font-size: var(--fs-title); line-height: 1.2; }
-
-.action-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.workspace-label { margin: 0 0 var(--space-2); color: var(--muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.08em; }
-
-/* Lebar kartu minimum 180px tapi dibatasi lebar panel (min(180px, 100%)) — tanpa batas itu,
-   satu kolom 180px di layar 320px membuat grid melebihi panelnya dan memicu scroll horizontal. */
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr));
-  gap: var(--space-3);
-}
-
-/* Pembantu tata letak pengganti inline style. */
+.view-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding-top: var(--space-3); }
+.view-title { font-size: var(--fs-display); line-height: 1.2; overflow-wrap: anywhere; }
+.view-head .subtle, .topbar .subtle { margin-top: var(--space-2); }
+.action-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.workspace-label { margin: 0 0 var(--space-3); padding-inline: var(--space-3); color: var(--muted); font-size: var(--fs-xs); letter-spacing: 0.075em; text-transform: uppercase; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr)); gap: var(--space-3); }
 .m-0 { margin: 0; }
 .mt-md { margin-top: var(--space-4); }
 .mt-xl { margin-top: var(--space-5); }
 .mx-auto { margin-inline: auto; }
 .text-right { text-align: right; }
 .btn-block { width: 100%; justify-content: center; }
-.setup-link { margin-top: var(--space-4); text-align: center; color: var(--muted); font-size: var(--fs-sm); }
-.empty-state { grid-column: 1 / -1; padding: var(--space-5) 0; }
+.setup-link { padding-top: var(--space-4); border-top: 1px solid var(--line-soft); color: var(--muted); font-size: var(--fs-sm); }
+.setup-link:empty { display: none; }
+.empty-state { grid-column: 1 / -1; padding: var(--space-7) var(--space-3); color: var(--muted); max-width: 36rem; }
+.view-enter .main, .view-enter .login-card { animation: view-in 220ms ease-out both; }
+@keyframes view-in { from { opacity: 0; transform: translateY(4px); } }
 
-/* Breakpoint di bawah ini memakai lebar panel (container query .app-shell), bukan lebar viewport.
-   Ambang 720px sengaja dipilih supaya cocok dengan 768px layar: lebar panel = viewport dikurangi
-   dua gutter (clamp 12-32px), jadi 720px di sini sama dengan sekitar 768px viewport. */
 @container shell (max-width: 720px) {
-  /* Sidebar jadi drawer off-canvas: digeser dengan transform (bukan display: none) supaya ada
-     animasi masuk/keluar. position: absolute, bukan fixed, karena containment `.app-shell`
-     membuat fixed di dalamnya ikut menggulir — halaman dikunci lewat body.is-drawer selama terbuka. */
-  /* visibility: hidden saat tertutup supaya tombol di sidebar yang di luar layar tidak bisa dijangkau
-     Tab; visibility ikut ditransisikan, jadi hilangnya baru terjadi setelah geseran selesai. */
-  .sidebar { position: absolute; inset-block: 0; left: 0; width: min(84%, 20rem); z-index: 45; overflow-y: auto; border-radius: 0 var(--radius-lg) var(--radius-lg) 0; transform: translateX(-102%); visibility: hidden; transition: transform var(--motion), visibility var(--motion); }
+  .sidebar { position: absolute; inset-block: 0; left: 0; width: min(86%, 20rem); z-index: 45; overflow-y: auto; transform: translateX(-102%); visibility: hidden; transition: transform var(--motion), visibility var(--motion); }
   body.is-drawer .sidebar { transform: none; visibility: visible; }
   .drawer-toggle { display: inline-flex; }
-  .drawer-scrim { display: block; position: absolute; inset: 0; z-index: 44; background: rgba(9, 8, 5, 0.66); opacity: 0; pointer-events: none; transition: opacity var(--motion); }
+  .drawer-scrim { display: block; position: absolute; inset: 0; z-index: 44; background: rgba(12, 10, 8, 0.76); opacity: 0; pointer-events: none; transition: opacity var(--motion); }
   body.is-drawer .drawer-scrim { opacity: 1; pointer-events: auto; }
-  .topbar { align-items: flex-start; }
+  .main { padding-inline: var(--space-4); gap: var(--space-4); }
+  .topbar { gap: var(--space-2); min-height: 76px; }
+  .topbar > div:first-of-type:not(.breadcrumb) { flex: 1; }
+  .topbar .view-title { font-size: var(--fs-title); }
+  .topbar .user-menu .text-right { display: none; }
+  .sidebar-bottom { margin-top: var(--space-5); }
 }
-
-/* Kolom kanan Owner control baru sepadan setelah panel benar-benar lebar. */
 @container shell (min-width: 1025px) {
-  .layout { grid-template-columns: minmax(0, 1fr) minmax(16rem, 21rem); }
+  .layout { grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem); }
 }
-
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
 }

@@ -1,84 +1,99 @@
-/* Gaya khusus per layar: login, dasbor file, sampah, owner control. */
-
-/* Login dan setup owner */
-.login-page {
-  display: grid;
-  place-items: center;
-  min-height: 100vh;
-  padding: var(--space-5);
-}
-.login-card {
-  width: min(420px, 100%);
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-6);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, var(--panel), var(--ink-soft));
-  box-shadow: var(--shadow);
-}
-.login-card h1 { font-size: var(--fs-title); line-height: 1.25; margin: var(--space-2) 0; }
+/* Login: a quiet brand column and a focused sign-in form, not a floating card. */
+.login-page { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); min-height: 100dvh; }
+.login-intro { display: flex; flex-direction: column; justify-content: space-between; gap: var(--space-7); padding: clamp(2rem, 5vw, 5rem); background: var(--ink); border-right: 1px solid var(--line-soft); }
+.login-intro .brand { font-size: var(--fs-xl); }
+.login-statement { padding-block: var(--space-7); }
+.login-statement .workspace-label { padding: 0; color: var(--gold); margin-bottom: var(--space-5); }
+.login-statement h1 { font-size: clamp(2.3rem, 3.4vw, 4rem); line-height: 1.14; letter-spacing: -0.045em; }
+.login-statement h1 span { color: var(--gold); }
+.login-statement > p:last-child { color: var(--muted); font-size: var(--fs-body); line-height: 1.8; margin-top: var(--space-5); max-width: 28rem; }
+.login-footnote { color: var(--muted); font-size: var(--fs-sm); }
+.login-card { align-self: center; justify-self: center; width: min(420px, 100%); display: grid; gap: var(--space-5); padding: var(--space-6); margin-block: var(--space-7); }
+.login-card h2 { font-size: var(--fs-display); line-height: 1.2; margin-bottom: var(--space-3); }
+.login-card .workspace-label { padding: 0; }
 .login-card form { margin-top: var(--space-3); }
-.login-card .brand { font-size: var(--fs-xl); }
+.login-card .primary { justify-content: space-between; }
+.brand-logo { width: 32px; height: 32px; border-radius: var(--radius-sm); object-fit: cover; }
 
-.brand-logo { width: 26px; height: 26px; border-radius: var(--radius-sm); object-fit: cover; }
-
-/* Dasbor file: satu kolom daftar (tanpa kolom kanan) supaya isi folder jadi fokus utama.
-   Ukuran h2 panel mengikuti h2 global (var(--fs-lg)) — tidak perlu override px lagi. */
-.files-panel .grid { margin-top: var(--space-2); }
+/* Working canvas: tabs/actions, explicit drop target, then the full-width file ledger. */
+.file-toolbar { gap: var(--space-3); }
+.files-panel .grid { margin-top: 0; }
+.files-panel { margin-bottom: calc(56px + var(--space-5) + env(safe-area-inset-bottom, 0px)); padding: 0; overflow: clip; }
+.files-panel .panel-heading { padding: var(--space-4) var(--space-5); margin: 0; border-bottom: 1px solid var(--line); background: var(--ink-soft); }
+.files-panel .panel-heading h2 { font: inherit; font-size: var(--fs-md); font-weight: 500; color: var(--muted-strong); }
+.file-list { gap: 0; grid-template-columns: minmax(0, 1fr); container-type: inline-size; container-name: file-list; }
+.file-card { padding-inline: var(--space-5); }
+.file-card.folder .file-icon { background: transparent; color: var(--gold); }
+.file-card.folder .file-icon .ikon { fill: var(--gold-soft); }
+.file-card .file-info { gap: var(--space-1); }
+.file-card .file-name { font-size: var(--fs-body); }
+.file-card .file-meta { font-size: var(--fs-xs); }
+.file-card .card-actions { gap: 0; }
 .panel.stats h3 { color: var(--muted-strong); }
-.file-list { gap: 2px; grid-template-columns: minmax(0, 1fr); container-type: inline-size; container-name: file-list; }
-.files-panel { margin-bottom: calc(56px + var(--space-5) + env(safe-area-inset-bottom, 0px)); }
-
-/* Lebar daftar, bukan viewport: sidebar juga mengambil ruang pada tablet. */
-@container file-list (max-width: 520px) {
-  .card-actions { grid-column: 1 / -1; justify-content: flex-start; opacity: 1; }
-  .icon-btn { width: 44px; height: 44px; }
-  .file-card { padding-inline: 0; }
-}
-
-/* Tab pemisah berkas biasa dan berkas CDN. Pindah tab cuma mengganti data-tab di panel — CSS yang
-   menyembunyikan baris, jadi tidak ada permintaan ulang ke server. */
-.tabs { display: inline-flex; gap: var(--space-1); padding: 4px; border: 1px solid var(--line-soft); border-radius: var(--radius-pill); background: var(--panel-soft); }
-.tab { display: inline-flex; align-items: center; gap: var(--space-2); padding: 8px var(--space-4); border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: var(--muted-strong); font: inherit; font-size: var(--fs-md); cursor: pointer; transition: background var(--motion), color var(--motion), border-color var(--motion); }
+.tabs { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--ink); }
+.tab { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: 44px; padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-md); cursor: pointer; transition: background var(--motion), color var(--motion); }
 .tab:hover { color: var(--paper); }
-.tab.active { background: var(--gold-soft); border-color: var(--gold-dark); color: var(--gold-bright); }
+.tab.active { background: var(--panel-soft); color: var(--paper); }
+.tab .eyebrow { font-variant-numeric: tabular-nums; padding-inline: var(--space-1); color: inherit; }
 .files-panel[data-tab="file"] .file-card.is-cdn,
 .files-panel[data-tab="cdn"] .file-card:not(.is-cdn) { display: none; }
-/* Baris unggah tidak ikut aturan tab di atas: kalau tidak dikecualikan, memulai unggahan dari tab CDN
-   menghasilkan bilah yang tak terlihat sampai render ulang. */
 .files-panel[data-tab="cdn"] .file-card.is-uploading { display: grid; }
 .files-panel[data-tab="file"] .empty-cdn,
 .files-panel[data-tab="cdn"] .empty-file { display: none; }
+.sidebar .storage-card { padding: var(--space-3); }
+.sidebar .storage-card .storage-isi { font-size: var(--fs-md); }
 
-/* Penyimpanan di sidebar: versi ringkas, karena sidebar hanya selebar 264px. */
-.sidebar .storage-card { padding: var(--space-4); }
-.sidebar .storage-card .storage-isi { font-size: var(--fs-xl); }
-
-/* Pengaturan akun: dua formulir berdampingan saat panel lebar, satu kolom saat sempit. auto-fit +
-   min() supaya tidak perlu media query dan tidak pernah meluber di layar 320px. */
-.akun-forms { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr)); align-items: start; }
-
-/* Sampah: satu kolom baris, sama seperti daftar file. */
-.trash-list { gap: var(--space-1); }
+/* Configure: each form reads as a section, titles left / fields right on wide screens. */
+.akun-forms { display: grid; gap: var(--space-5); }
+.account-section { display: grid; grid-template-columns: minmax(8rem, 0.7fr) minmax(0, 1.3fr); gap: var(--space-6); }
+.account-section .panel-heading { display: block; }
+.account-section .panel-heading h2 { margin-bottom: var(--space-2); }
+.account-section .eyebrow { display: block; overflow-wrap: anywhere; }
+.account-section form { max-width: 38rem; }
+.trash-list { gap: 0; padding-inline: var(--space-4); }
+.trash-row { border: 0; border-bottom: 1px solid var(--line-soft); padding-block: var(--space-4); }
 .trash-row .file-name { font-weight: 500; }
 .trash-row .file-icon { width: 38px; height: 38px; }
-
-/* Owner control: ringkasan sidebar jadi daftar fakta terpisah (label kiri, angka kanan) — bukan satu
-   baris panjang yang digabung "·". Daftar provider/member dan timeline aktivitas memakai aturan
-   bersama di components.css (.provider, .member-row, .timeline). */
-.sidebar-stats { display: grid; }
-.stat { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); padding: 4px 0; border-bottom: 1px solid var(--line-soft); }
+.secondary.danger { color: var(--danger); }
+.secondary.danger:hover { border-color: var(--danger); }
+.sidebar-stats { display: grid; padding-inline: var(--space-3); }
+.stat { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--line-soft); }
 .stat:last-child { border-bottom: 0; }
 .stat-nama { color: var(--muted); font-size: var(--fs-sm); }
 .stat-angka { font-family: var(--f-mono); color: var(--muted-strong); font-size: var(--fs-sm); }
+.provider-name { flex-wrap: wrap; }
+.provider-kind { color: var(--muted); font-size: var(--fs-xs); font-weight: 400; }
+.provider-meter { display: block; appearance: none; width: min(100%, 20rem); height: 6px; margin-top: var(--space-3); border: 0; border-radius: var(--radius-pill); background: var(--amber-unlit); }
+.provider-meter::-webkit-meter-bar { background: var(--amber-unlit); border: 0; height: 6px; }
+.provider-meter::-webkit-meter-optimum-value { background: var(--gold); }
+.provider-meter::-moz-meter-bar { background: var(--gold); }
 
-/* Member tidak melihat rincian provider: baris per provider sudah tidak dirender lagi di sidebar
-   (lihat widget penyimpanan di files.js), jadi satu-satunya penjagaan yang tersisa adalah
-   applyRoleVisibility() yang menyembunyikan nama provider di meta tiap berkas. */
-
-/* Baris Sampah: tombolnya turun ke baris sendiri di panel sempit supaya nama item tetap terbaca. */
+@container file-list (max-width: 520px) {
+  .card-actions { grid-column: 1 / -1; justify-content: flex-start; opacity: 1; }
+  .icon-btn { width: 44px; height: 44px; }
+  .file-card { padding-inline: var(--space-3); }
+  .file-info { grid-column: 2 / -1; }
+  .folder-open { grid-column: 1 / -1; }
+  .file-card .card-actions { padding-left: 0; gap: var(--space-1); }
+}
+@container shell (max-width: 1024px) {
+  .account-section { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+}
 @container shell (max-width: 640px) {
   .trash-row { flex-wrap: wrap; }
   .trash-actions { width: 100%; justify-content: flex-end; }
+  .dropzone { gap: var(--space-3); padding: var(--space-4); }
+  .dropzone > .ikon:last-child { display: none; }
+  .file-toolbar .tabs { width: 100%; }
+  .file-toolbar .tab { flex: 1; }
+  .file-toolbar > .secondary { flex: 1; justify-content: center; }
+  .breadcrumb { flex: 1; }
+}
+@media (max-width: 760px) {
+  .login-page { grid-template-columns: minmax(0, 1fr); }
+  .login-intro { padding: var(--space-5); gap: var(--space-5); border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .login-statement { padding: 0; }
+  .login-statement h1 { font-size: clamp(1.875rem, 6vw, 2.5rem); }
+  .login-statement > p:last-child, .login-footnote, .login-statement .workspace-label { display: none; }
+  .login-card { margin-block: var(--space-4); padding: var(--space-5); }
 }
