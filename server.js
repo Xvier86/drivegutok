@@ -317,6 +317,9 @@ function providerStatusForView(provider) {
   return { ...providerStatus(provider), used_bytes: cached.usedBytes, capacity_bytes: cached.capacityBytes, capacitySource: cached.capacitySource, capacityError: cached.capacityError || null, capacityNote: cached.capacityNote || null };
 }
 function refreshCapacityInBackground(provider) {
+  // Dipanggil juga tepat setelah login Google selesai: tanpa ini kuota baru terbaca pada permintaan
+  // berikutnya, dan jawaban /api/admin/overview yang datang berbarengan masih memakai angka provider
+  // yang baru saja dimatikan (0/0) — Owner melihat "penyimpanan belum terbaca" padahal login berhasil.
   if (!Number(provider.enabled) || !providerStatus(provider).configured) return;
   const cached = capacityCache.get(provider.id);
   const masaBerlaku = cached?.capacitySource === 'error' ? CAPACITY_ERROR_TTL_MS : CAPACITY_TTL_MS;
@@ -599,7 +602,10 @@ async function sendRemoteFile(res, file, provider, disposition = 'inline', range
 async function verifyGoogleProvider(config) {
   config = normalizeProviderConfig('gdrive', config);
   const accessToken = await getGoogleAccessToken(config);
-  const response = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(config.folderId)}?fields=id,name,mimeType,driveId,capabilities&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
+  // Folder boleh dikosongkan untuk login akun Google: 'root' adalah folder utama (My Drive) akun itu
+  // sendiri, jadi Owner tidak wajib menyiapkan folder lebih dulu hanya untuk menyambungkan akun.
+  const target = config.folderId || 'root';
+  const response = await fetch(`${GOOGLE_API}/drive/v3/files/${encodeURIComponent(target)}?fields=id,name,mimeType,driveId,capabilities&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error?.message || `Google Drive API ${response.status}`);
   if (result.mimeType !== 'application/vnd.google-apps.folder') throw new Error('Link tersebut bukan folder Google Drive.');
@@ -1226,7 +1232,7 @@ function googleRedirectUri(req, providerId) {
   const dasar = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
   return `${dasar}/api/admin/providers/${providerId}/google/callback`;
 }
-function halamanGoogle(res, pesan, status) {
+function halamanGoogle(res, pesan, status = 200) {
   return res.status(status).type('html').send(`<!doctype html><meta charset="utf-8"><title>Login Google</title><p>${escapeHtml(pesan)}</p><p><a href="/">Kembali ke Gutok Drive</a></p>`);
 }
 app.get('/api/admin/providers/:id/google/login', requireUser, ownerOnly, (req, res) => {
@@ -1265,11 +1271,37 @@ app.get('/api/admin/providers/:id/google/callback', async (req, res) => {
     if (!token.refresh_token) throw new Error('Google tidak mengirim refresh token. Cabut akses lama di myaccount.google.com/permissions lalu sambungkan ulang.');
     db.prepare('UPDATE providers SET config_json = ? WHERE id = ?').run(encryptConfig({ ...config, refreshToken: token.refresh_token }), provider.id);
     audit(sesi.actorId, 'google_login', 'provider', provider.id);
+    // "Login Google → langsung terbaca dan bisa dipakai" hanya benar kalau tiga hal ini dilakukan di
+    // sini, bukan menunggu klik Owner berikutnya: (1) simpan refresh token sudah di atas; (2) buang
+    // angka kuota lama (0/0 milik provider yang tadi dimatikan) supaya tidak sempat tampil; (3)
+    // periksa kuota memakai token baru dan nyalakan provider kalau kredensialnya sudah lengkap —
+    // kalau dibiarkan nonaktif, /api/admin/overview tetap melaporkan capacitySource 'disabled' dan
+    // Owner menyimpulkan penyimpanannya masih belum terbaca walau login sukses.
+    const segar = db.prepare('SELECT * FROM providers WHERE id = ?').get(provider.id);
+    capacityCache.delete(provider.id);
+    let catatan = '';
+    const status = providerStatus(segar);
+    if (!status.configured) {
+      catatan = 'Kredensial belum lengkap: ' + status.missing.join(', ') + '. Isi lalu simpan, kemudian nyalakan provider.';
+    } else {
+      if (!Number(segar.enabled)) {
+        db.prepare('UPDATE providers SET enabled = 1 WHERE id = ?').run(segar.id);
+        segar.enabled = 1;
+        audit(sesi.actorId, 'enable', 'provider', segar.id);
+      }
+      const kuota = await readProviderCapacity(segar).catch((error) => ({ capacityError: error.message }));
+      capacityCache.set(segar.id, { ...kuota, at: Date.now() });
+      catatan = kuota.capacityError
+        ? `Akun tersambung dan provider dinyalakan, tetapi kuota belum bisa dibaca: ${kuota.capacityError}`
+        : kuota.capacityNote
+          ? `Akun tersambung dan provider dinyalakan. ${kuota.capacityNote}`
+          : `Akun tersambung dan provider dinyalakan. Kuota terbaca: ${(kuota.usedBytes / 1024 ** 3).toFixed(2)} GB terpakai dari ${(kuota.capacityBytes / 1024 ** 3).toFixed(2)} GB.`;
+    }
+    return halamanGoogle(res, `Login Google berhasil. ${catatan}`);
   } catch (error) {
     console.error(`[gdrive oauth] login gagal: ${error.message}`);
     return halamanGoogle(res, `Login gagal: ${error.message}`, 502);
   }
-  return res.redirect('/?google=ok');
 });
 app.get('/*splat', (req, res) => { if (req.path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404); return res.sendFile(path.join(root, 'assets', 'index.html')); });
 app.listen(port, () => console.log(`MyDrive berjalan di http://127.0.0.1:${port}`));

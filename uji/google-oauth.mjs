@@ -35,6 +35,7 @@ fs.symlinkSync(path.join(root, 'node_modules'), path.join(kerja, 'node_modules')
 // sedangkan penukaran kode otorisasi mengembalikan 'AT-CODE' yang sekali pakai.
 const jejakDrive = [];
 const tokenDiminta = [];
+let aboutDibaca = 0;
 const googlePalsu = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://uji');
   const balasJson = (status, data) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(data));
@@ -58,7 +59,13 @@ const googlePalsu = http.createServer((req, res) => {
   }
   if (url.pathname === '/o/oauth2/v2/auth') return balasJson(200, { halaman: 'persetujuan' });
   jejakDrive.push(`${req.method} ${url.pathname} ${req.headers.authorization || 'tanpa-token'}`);
-  if (url.pathname === '/drive/v3/about') return balasJson(200, { storageQuota: { usage: 1234, limit: 9999 } });
+  // Angka kuota naik sedikit setiap kali dibaca supaya urutan pembacaan bisa dibedakan: sesudah
+  // perbaikan, callback login Google membaca kuota sekali (angka 1234), dan pembacaan berikutnya
+  // bergeser. Uji di bawah memakai `aboutDibaca` supaya tidak bergantung pada urutan itu.
+  aboutDibaca += 1;
+  if (url.pathname === '/drive/v3/about') return balasJson(200, { storageQuota: { usage: String(1234 + aboutDibaca - 1), limit: 9999 } });
+  // Folder utama ('root') dipakai saat Owner tidak mengisi folder tujuan: harus tetap dianggap folder.
+  if (url.pathname === '/drive/v3/files/root') return balasJson(200, { id: 'ROOT-UJI', name: 'My Drive', mimeType: 'application/vnd.google-apps.folder', capabilities: { canAddChildren: true } });
   if (url.pathname === '/drive/v3/files/FOLDER-UJI') return balasJson(200, { id: 'FOLDER-UJI', name: 'uji', mimeType: 'application/vnd.google-apps.folder', capabilities: { canAddChildren: true } });
   if (url.pathname === '/upload/drive/v3/files') {
     let panjang = 0;
@@ -181,10 +188,19 @@ try {
   cek('callback dengan state palsu ditolak', stateSalah.status === 400, `status=${stateSalah.status}`);
 
   const callback = await api(`/api/admin/providers/${providerId}/google/callback?code=CODE-uji&state=${encodeURIComponent(state)}`, { redirect: 'manual' });
-  cek('callback menyimpan refresh token lalu kembali ke dashboard', callback.status === 302 && callback.headers.get('location') === '/?google=ok', `status=${callback.status} location=${callback.headers.get('location')}`);
+  // Setelah callback, halaman konfirmasi milik aplikasi yang dikirim (bukan pengalihan kosong): Owner
+  // harus langsung tahu hasilnya — akun tersambung, penyimpanan terbaca, provider dinyalakan.
+  const halamanCallback = await callback.text();
+  cek('callback menyimpan refresh token lalu melaporkan hasilnya ke Owner', callback.status === 200 && /Login Google berhasil/.test(halamanCallback) && /Kuota terbaca/.test(halamanCallback), `status=${callback.status} halaman=${halamanCallback.replace(/\s+/g, ' ').slice(0, 160)}`);
   cek('penukaran kode memakai redirect URI yang sama', tokenDiminta.some((baris) => baris.startsWith(`authorization_code:CID-uji:${redirectUri}`)), tokenDiminta.join(' | '));
   const sesudahLogin = await providerDari(cookie, providerId);
   cek('provider siap setelah login Google', sesudahLogin?.configured === true && sesudahLogin.missing.length === 0, `missing=${JSON.stringify(sesudahLogin?.missing)}`);
+  // Permintaan pemilik: "cuma perlu login google aja terus otomatis kebaca dan bisa digunakan" —
+  // jadi setelah callback, provider harus SUDAH aktif, bukan menunggu Owner mengaktifkan manual.
+  cek('provider otomatis aktif setelah login Google', sesudahLogin?.enabled === 1, `enabled=${sesudahLogin?.enabled}`);
+  // Kuota harus sudah terbaca tepat saat callback (pembacaan pertama Google palsu = 1234), tanpa
+  // menunggu permintaan berikutnya dan tanpa satu klik tambahan dari Owner.
+  cek('kuota sudah terbaca saat callback login (bukan nanti)', sesudahLogin?.capacitySource === 'google-drive' && sesudahLogin?.used_bytes === 1234 && sesudahLogin?.capacity_bytes === 9999, `sumber=${sesudahLogin?.capacitySource} dipakai=${sesudahLogin?.used_bytes} kapasitas=${sesudahLogin?.capacity_bytes}`);
 
   const nyalakan = await kirimJson(`/api/admin/providers/${providerId}`, { enabled: true }, cookie, 'PATCH');
   cek('provider Google Drive OAuth bisa diaktifkan', nyalakan.status === 200, `status=${nyalakan.status} ${nyalakan.data?.error || ''}`);
@@ -199,9 +215,11 @@ try {
   cek('unggahan memakai access token dari refresh token', jejakUnggah.includes('Bearer AT-REFRESH'), jejakUnggah || '(tidak ada permintaan unggah)');
   cek('access token sekali pakai tidak dipakai ulang', !jejakDrive.some((baris) => baris.includes('Bearer AT-CODE')), jejakDrive.join(' | '));
 
-  // 5) Kuota dibaca dari API Google memakai jabat tangan refresh token yang sama.
+  // 5) Kuota dibaca dari API Google memakai jabat tangan refresh token yang sama — dan sudah terbaca
+  // sejak callback login, bukan menunggu permintaan berikutnya. `aboutDibaca` membuat angka palsu
+  // naik setiap pembacaan, jadi nilai yang tersimpan harus sesuai pembacaan terakhir.
   const kuota = await tunggu(async () => { const provider = await providerDari(cookie, providerId); return provider?.capacitySource === 'google-drive' ? provider : null; });
-  cek('kuota Google Drive terbaca lewat refresh token', kuota?.capacity_bytes === 9999 && kuota?.used_bytes === 1234, `sumber=${kuota?.capacitySource} dipakai=${kuota?.used_bytes} kapasitas=${kuota?.capacity_bytes}`);
+  cek('kuota Google Drive terbaca lewat refresh token', kuota?.capacity_bytes === 9999 && kuota?.used_bytes >= 1234, `sumber=${kuota?.capacitySource} dipakai=${kuota?.used_bytes} kapasitas=${kuota?.capacity_bytes}`);
 
   // 6) Menyimpan konfigurasi tanpa mengetik ulang rahasia (persis yang dikirim modal, karena kolom
   // kosong tidak diisi lagi) TIDAK boleh menghapus refresh token.
