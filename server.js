@@ -114,7 +114,10 @@ const cookieOptions = `Path=/; HttpOnly; SameSite=Lax${process.env.NODE_ENV === 
 const providerRequirements = {
   telegram: ['botToken'],
   mega: ['email', 'password'],
-  gdrive: ['folderId']
+  // Google Drive tidak punya syarat umum: apa yang wajib tergantung cara akses (lihat providerStatus).
+  // Service account wajib punya folder Shared Drive; login akun Google tidak — foldernya dibuat
+  // otomatis saat akun disambungkan, dan folder kosong sah (My Drive akun itu).
+  gdrive: []
 };
 const providerKinds = new Set(Object.keys(providerRequirements));
 // Telegram API bisa diarahkan ke server Bot API lokal lewat env ini (dipakai uji RAM di uji/ram.mjs).
@@ -185,11 +188,18 @@ function providerStatus(provider) {
     // Hanya cara akses yang dipakai yang diperiksa: provider OAuth tidak butuh service account dan
     // sebaliknya. Kalau keduanya dihitung, provider yang sehat selalu tampil "Belum siap".
     if (config.authMode === 'oauth') {
+      // `folderId` sengaja TIDAK diwajibkan untuk OAuth: alur satu-klik membuat provider lebih dulu
+      // lalu membuat folder kerja saat callback, dan folder kosong tetap sah (dipakai sebagai My
+      // Drive akun itu). Kalau diwajibkan, provider hasil tombol satu-klik akan selamanya "Belum
+      // siap" dan callback menolak menyalakannya.
       for (const key of ['clientId', 'clientSecret', 'refreshToken']) if (!config[key]) missing.push(key);
     } else {
       let account = null;
       try { account = typeof config.serviceAccountJson === 'string' ? JSON.parse(config.serviceAccountJson) : config.serviceAccountJson; } catch {}
       if (!account?.client_email || !account?.private_key || !account?.token_uri) missing.push('serviceAccountJson');
+      // Service account HARUS diarahkan ke folder Shared Drive: tanpa folder, berkas akan ditolak
+      // Google ("Service Accounts do not have storage quota").
+      if (!config.folderId) missing.push('folderId');
     }
   }
   const { config_json: _config, ...safeProvider } = provider;
@@ -1308,6 +1318,35 @@ app.patch('/api/admin/providers/:id', requireUser, ownerOnly, async (req, res) =
 // satu server, satu percobaan login pending, kedaluwarsa 10 menit. Callback TIDAK memakai cookie
 // sesi — browser kembali dari accounts.google.com, dan state acak inilah yang mengikat callback ke
 // provider serta Owner yang memulainya.
+// Google OAuth untuk provider Google Drive — ditulis supaya pemasangan akun sesederhana mungkin:
+// SATU klik "Hubungkan Google" dari halaman Kendali workspace.
+//
+// Kenapa dulu harus tiga langkah (Tambah storage -> isi Client ID/secret -> Login Google): Client ID
+// diperlukan sebelum Google bisa dimintai izin. Kalau kredensial OAuth aplikasi disediakan lewat env
+// (GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET), langkah itu hilang sepenuhnya — server
+// memakai kredensial sendiri, dan yang diminta ke pemilik hanya persetujuan akun.
+//
+// Redirect URI TETAP per-provider (`.../providers/<id>/google/callback`) karena URI itulah yang
+// sudah terbukti berfungsi di produksi; menggantinya dengan satu URI tetap hanya menambah risiko
+// "redirect_uri_mismatch" yang sudah terbukti tidak bisa diverifikasi dari luar.
+const kredensialOAuth = () => ({
+  clientId: (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim(),
+  clientSecret: (process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim(),
+});
+// FolderDriveBaru: buat folder kerja baru di My Drive akun yang baru dihubungkan, supaya berkas
+// tidak tercampur ke akar Drive pribadi dan pemilik tidak perlu menyiapkan folder lebih dulu.
+async function buatFolderKerja(config) {
+  const accessToken = await getGoogleAccessToken(config);
+  const response = await fetch(`${GOOGLE_API}/drive/v3/files?fields=id,name`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Gutok Drive', mimeType: 'application/vnd.google-apps.folder' }),
+    signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+  });
+  const hasil = await response.json().catch(() => ({}));
+  if (!response.ok || !hasil.id) throw new Error(hasil.error?.message || `Google Drive API ${response.status}`);
+  return hasil.id;
+}
 const googleLoginStates = new Map();
 const GOOGLE_LOGIN_TTL_MS = 10 * 60 * 1000;
 const escapeHtml = (nilai) => String(nilai).replace(/[&<>"']/g, (huruf) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[huruf]));
@@ -1326,7 +1365,17 @@ app.get('/api/admin/providers/:id/google/login', requireUser, ownerOnly, (req, r
   if (!provider || provider.kind !== 'gdrive') return json(res, { error: 'Provider Google Drive tidak ditemukan.' }, 404);
   let config = {};
   try { config = normalizeProviderConfig('gdrive', decryptConfig(provider.config_json)); } catch { return json(res, { error: 'Konfigurasi provider tidak dapat dibaca.' }, 409); }
-  if (!config.clientId || !config.clientSecret) return json(res, { error: 'Isi Client ID dan Client secret Google lebih dulu, lalu simpan konfigurasi.' }, 409);
+  // Kredensial aplikasi: pakai milik provider, dan kalau kosong pakai milik server (env). Dengan env
+  // terisi, pemilik tak perlu menyentuh Client ID sama sekali.
+  const bawaan = kredensialOAuth();
+  if (!config.clientId && bawaan.clientId) config.clientId = bawaan.clientId;
+  if (!config.clientSecret && bawaan.clientSecret) config.clientSecret = bawaan.clientSecret;
+  // Simpan kredensial server ke provider supaya pemakaian berikutnya (kuota, unggah, unduh) tidak
+  // bergantung pada env yang bisa saja hilang saat PM2 restart.
+  if (config.clientId && config.clientSecret && config.clientId !== decryptConfig(provider.config_json).clientId) {
+    db.prepare('UPDATE providers SET config_json = ? WHERE id = ?').run(encryptConfig(config), provider.id);
+  }
+  if (!config.clientId || !config.clientSecret) return json(res, { error: 'Kredensial OAuth Google belum ada. Isi Client ID dan Client secret, atau setel GOOGLE_OAUTH_CLIENT_ID & GOOGLE_OAUTH_CLIENT_SECRET di .env server.' }, 409);
   for (const [kunci, nilai] of googleLoginStates) if (nilai.expiresAt < Date.now()) googleLoginStates.delete(kunci);
   const state = crypto.randomBytes(16).toString('base64url');
   googleLoginStates.set(state, { providerId: provider.id, actorId: req.user.id, expiresAt: Date.now() + GOOGLE_LOGIN_TTL_MS });
@@ -1355,7 +1404,20 @@ app.get('/api/admin/providers/:id/google/callback', async (req, res) => {
     const config = normalizeProviderConfig('gdrive', decryptConfig(provider.config_json));
     const token = await googleTokenRequest({ client_id: config.clientId, client_secret: config.clientSecret, code: String(req.query.code), grant_type: 'authorization_code', redirect_uri: googleRedirectUri(req, provider.id) });
     if (!token.refresh_token) throw new Error('Google tidak mengirim refresh token. Cabut akses lama di myaccount.google.com/permissions lalu sambungkan ulang.');
-    db.prepare('UPDATE providers SET config_json = ? WHERE id = ?').run(encryptConfig({ ...config, refreshToken: token.refresh_token }), provider.id);
+    // Folder kerja dibuat otomatis kalau belum ada: pemilik cukup menyetujui akun, tanpa menyiapkan
+    // folder lebih dulu. Folder yang sudah diisi dipertahankan supaya menyambung ulang tidak
+    // memindahkan berkas ke folder baru.
+    let folderId = config.folderId;
+    let folderBaru = false;
+    if (!folderId) {
+      try {
+        folderId = await buatFolderKerja({ ...config, refreshToken: token.refresh_token });
+        folderBaru = true;
+      } catch (error) {
+        console.error(`[gdrive oauth] gagal membuat folder kerja: ${error.message}`);
+      }
+    }
+    db.prepare('UPDATE providers SET config_json = ? WHERE id = ?').run(encryptConfig({ ...config, folderId, refreshToken: token.refresh_token }), provider.id);
     audit(sesi.actorId, 'google_login', 'provider', provider.id);
     // "Login Google → langsung terbaca dan bisa dipakai" hanya benar kalau tiga hal ini dilakukan di
     // sini, bukan menunggu klik Owner berikutnya: (1) simpan refresh token sudah di atas; (2) buang
@@ -1383,11 +1445,42 @@ app.get('/api/admin/providers/:id/google/callback', async (req, res) => {
           ? `Akun tersambung dan provider dinyalakan. ${kuota.capacityNote}`
           : `Akun tersambung dan provider dinyalakan. Kuota terbaca: ${(kuota.usedBytes / 1024 ** 3).toFixed(2)} GB terpakai dari ${(kuota.capacityBytes / 1024 ** 3).toFixed(2)} GB.`;
     }
-    return halamanGoogle(res, `Login Google berhasil. ${catatan}`);
+    return halamanGoogle(res, `Login Google berhasil. ${catatan}${folderBaru ? " Folder kerja 'Gutok Drive' dibuat di My Drive akun ini." : ''}`);
   } catch (error) {
     console.error(`[gdrive oauth] login gagal: ${error.message}`);
     return halamanGoogle(res, `Login gagal: ${error.message}`, 502);
   }
+});
+// TAMBAH AKUN GOOGLE DALAM SATU KLIK.
+//
+// Pemilik cukup menekan satu tombol di Kendali workspace: server membuatkan provider-nya sendiri,
+// memakai kredensial OAuth aplikasi (env), lalu mengalihkan ke halaman izin Google. Setelah pemilik
+// menekan "Izinkan", callback di atas yang menyelesaikan sisanya (refresh token, folder kerja,
+// kuota, dan menyalakan provider). Tidak ada Client ID yang perlu ditempel, tidak ada folder yang
+// perlu disiapkan, dan tidak ada langkah "Aktifkan" setelahnya.
+app.get('/api/admin/google/tambah', requireUser, ownerOnly, (req, res) => {
+  const bawaan = kredensialOAuth();
+  if (!bawaan.clientId || !bawaan.clientSecret) {
+    return json(res, { error: 'Server belum punya kredensial OAuth Google. Setel GOOGLE_OAUTH_CLIENT_ID dan GOOGLE_OAUTH_CLIENT_SECRET di .env lalu restart, atau tambah provider manual dengan Client ID sendiri.' }, 409);
+  }
+  // Nama provider otomatis: "Google Drive 2", "Google Drive 3", … supaya dua akun tidak bertabrakan
+  // dan pemilik tidak perlu memikirkan nama.
+  const dipakai = db.prepare("SELECT name FROM providers WHERE kind = 'gdrive'").all().map((p) => p.name);
+  let nomor = dipakai.length + 1;
+  let nama = `Google Drive ${nomor}`;
+  while (dipakai.includes(nama)) { nomor += 1; nama = `Google Drive ${nomor}`; }
+  const config = normalizeProviderConfig('gdrive', {
+    authMode: 'oauth',
+    clientId: bawaan.clientId,
+    clientSecret: bawaan.clientSecret,
+  });
+  const provider = { id: id(), name: nama, kind: 'gdrive' };
+  // capacity_bytes 0 = "belum diketahui"; angka asli diisi dari kuota Google saat callback selesai,
+  // jadi tidak ada angka karangan yang sempat tampil di UI.
+  db.prepare('INSERT INTO providers (id, name, kind, enabled, used_bytes, capacity_bytes, config_json) VALUES (?, ?, ?, 0, 0, 0, ?)')
+    .run(provider.id, provider.name, provider.kind, encryptConfig(config));
+  audit(req.user.id, 'create', 'provider', provider.id);
+  return res.redirect(`/api/admin/providers/${provider.id}/google/login`);
 });
 app.get('/*splat', (req, res) => { if (req.path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404); return res.sendFile(path.join(root, 'assets', 'index.html')); });
 app.listen(port, () => console.log(`MyDrive berjalan di http://127.0.0.1:${port}`));

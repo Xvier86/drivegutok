@@ -34,6 +34,7 @@ fs.symlinkSync(path.join(root, 'node_modules'), path.join(kerja, 'node_modules')
 // (GOOGLE_API_BASE): refresh token uji 'RT-UJI' ditukar jadi 'AT-REFRESH' pada setiap permintaan,
 // sedangkan penukaran kode otorisasi mengembalikan 'AT-CODE' yang sekali pakai.
 const jejakDrive = [];
+const jejakFolderBaru = [];
 const tokenDiminta = [];
 let aboutDibaca = 0;
 const googlePalsu = http.createServer((req, res) => {
@@ -64,6 +65,13 @@ const googlePalsu = http.createServer((req, res) => {
   // bergeser. Uji di bawah memakai `aboutDibaca` supaya tidak bergantung pada urutan itu.
   aboutDibaca += 1;
   if (url.pathname === '/drive/v3/about') return balasJson(200, { storageQuota: { usage: String(1234 + aboutDibaca - 1), limit: 9999 } });
+  // Folder kerja baru dibuat server saat callback (alur satu-klik): POST ke /drive/v3/files.
+  if (url.pathname === '/drive/v3/files' && req.method === 'POST') {
+    let badan = '';
+    req.on('data', (p) => { badan += p; });
+    return req.on('end', () => { jejakFolderBaru.push(badan); return balasJson(200, { id: 'FOLDER-BARU', name: 'Gutok Drive' }); });
+  }
+  if (url.pathname === '/drive/v3/files/FOLDER-BARU') return balasJson(200, { id: 'FOLDER-BARU', name: 'Gutok Drive', mimeType: 'application/vnd.google-apps.folder', capabilities: { canAddChildren: true } });
   // Folder utama ('root') dipakai saat Owner tidak mengisi folder tujuan: harus tetap dianggap folder.
   if (url.pathname === '/drive/v3/files/root') return balasJson(200, { id: 'ROOT-UJI', name: 'My Drive', mimeType: 'application/vnd.google-apps.folder', capabilities: { canAddChildren: true } });
   if (url.pathname === '/drive/v3/files/FOLDER-UJI') return balasJson(200, { id: 'FOLDER-UJI', name: 'uji', mimeType: 'application/vnd.google-apps.folder', capabilities: { canAddChildren: true } });
@@ -106,7 +114,10 @@ dbLama.close();
 
 const anak = spawn('node', ['server.js'], {
   cwd: kerja,
-  env: { ...process.env, PORT: String(portApp), NODE_ENV: 'test', STORAGE_CONFIG_KEY: 'kunci-uji', GOOGLE_API_BASE: alamatGoogle, GOOGLE_AUTH_BASE: alamatGoogle, PUBLIC_BASE_URL: ALAMAT_PUBLIK },
+  env: { ...process.env, PORT: String(portApp), NODE_ENV: 'test', STORAGE_CONFIG_KEY: 'kunci-uji', GOOGLE_API_BASE: alamatGoogle, GOOGLE_AUTH_BASE: alamatGoogle, PUBLIC_BASE_URL: ALAMAT_PUBLIK,
+    // Kredensial aplikasi: inilah yang membuat "Tambah Google Drive" jadi satu klik — server punya
+    // Client ID sendiri, jadi Owner tidak perlu menempel apa pun.
+    GOOGLE_OAUTH_CLIENT_ID: 'CID-uji', GOOGLE_OAUTH_CLIENT_SECRET: 'CSECRET-uji' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let logAnak = '';
@@ -241,9 +252,35 @@ try {
   const sesudahBalik = await providerDari(cookie, providerId);
   cek('pindah cara akses membuang kredensial cara lama', pindah.status === 200 && sesudahPindah?.authMode === 'service' && sesudahPindah?.configured === true && balik.status === 200 && /refreshToken/.test(JSON.stringify(sesudahBalik?.missing)) && sesudahBalik?.configured === false, `authMode=${sesudahBalik?.authMode} missing=${JSON.stringify(sesudahBalik?.missing)}`);
 
+  // 9. SATU KLIK: /api/admin/google/tambah membuat provider sendiri (tanpa form Client ID), lalu
+  // mengalihkan ke halaman izin Google. Setelah callback, folder kerja dibuat otomatis sehingga
+  // pemilik tidak menyiapkan folder. Ini yang membuat "tambah akun" sederhana.
+  const mulaiKlik = await fetch(`${dasar}/api/admin/google/tambah`, { redirect: 'manual', headers: { cookie } });
+  // Pengalihan pertama menuju rute login provider yang BARU dibuat — dari situ id-nya dibaca, jadi
+  // tes tidak menebak id dan tidak perlu tahu Client ID.
+  const lokasiLogin = mulaiKlik.headers.get('location') || '';
+  const idProviderKlik = (lokasiLogin.match(/providers\/([^/]+)\/google\/login/) || [])[1] || '';
+  const providerKlik = idProviderKlik ? await providerDari(cookie, idProviderKlik) : null;
+  cek('tombol Tambah Google Drive membuat provider sendiri lalu menuju login Google', mulaiKlik.status === 302 && !!idProviderKlik, `status=${mulaiKlik.status} location=${lokasiLogin.slice(0, 80)}`);
+  // Yang dibuktikan di sini: pemilik TIDAK perlu mengisi Client ID — kredensial server sudah terpasang.
+// restoreToken memang belum ada sebelum pemilik menyetujui, jadi itu satu-satunya yang kurang.
+cek('provider baru sudah berisi kredensial server (tanpa isi apa pun)', providerKlik?.missing?.length === 1 && providerKlik.missing[0] === 'refreshToken', `missing=${JSON.stringify(providerKlik?.missing)}`);
+  const loginKlik = await fetch(`${dasar}${lokasiLogin}`, { redirect: 'manual', headers: { cookie } });
+  const izinKlik = new URL(loginKlik.headers.get('location') || 'http://kosong.invalid/');
+  const stateKlik = izinKlik.searchParams.get('state') || '';
+  cek('setelah provider dibuat, langsung menuju halaman izin Google', loginKlik.status === 302 && izinKlik.origin === alamatGoogle && izinKlik.pathname === '/o/oauth2/v2/auth' && stateKlik.length >= 16, `status=${loginKlik.status} url=${izinKlik.href.slice(0, 80)}`);
+  // Callback: folder kerja harus dibuat otomatis (pemilik tidak menyiapkan folder) dan provider
+  // langsung aktif dengan kuota terbaca.
+  const callbackKlik = await fetch(`${dasar}/api/admin/providers/${idProviderKlik}/google/callback?code=CODE-uji&state=${encodeURIComponent(stateKlik)}`);
+  const halamanKlik = await callbackKlik.text();
+  cek('callback membuat folder kerja otomatis', jejakFolderBaru.length === 1 && /Gutok Drive/.test(jejakFolderBaru[0]), `permintaan_buat_folder=${jejakFolderBaru.length} isi=${(jejakFolderBaru[0] || '').slice(0, 60)}`);
+  const sesudahKlik = await providerDari(cookie, idProviderKlik);
+  cek('provider satu-klik langsung aktif dan kuotanya terbaca', sesudahKlik?.enabled === 1 && sesudahKlik?.capacitySource === 'google-drive', `enabled=${sesudahKlik?.enabled} sumber=${sesudahKlik?.capacitySource}`);
+
+  // 10. /sans & /normal mengubah persona yang dikirim ke Hermes (tidak berlaku di sini) — selesai.
   cek('log server tidak memuat unhandledRejection', !/unhandledRejection/.test(logAnak), 'cari "unhandledRejection"');
 } catch (error) {
-  cek('uji selesai tanpa error', false, error.message);
+  cek('uji selesai tanpa error', false, (error && error.stack ? error.stack.split('\n').slice(0,3).join(' | ') : String(error)));
 } finally {
   clearTimeout(paksa);
   bersihkan();
