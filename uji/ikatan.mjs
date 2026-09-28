@@ -147,8 +147,10 @@ cek('akun.js menjelaskan status verifikasi dari balasan server', /data\.verifica
 cek('baris provider mengirim authMode ke tombol konfigurasi', /data-auth="\$\{esc\(provider\.authMode/.test(sumberAdmin));
 cek('modal konfigurasi menerima authMode tersimpan', /openProviderConfigModal\(button\.dataset\.provider, button\.dataset\.kind, button\.dataset\.auth\)/.test(sumberAdmin));
 cek('modal Google punya pemilih cara akses dan tombol login', /id="gdrive-auth"/.test(sumberAdmin) && /id="google-login"/.test(sumberAdmin) && /#gdrive-oauth/.test(sumberAdmin));
-cek('server.js punya rute login dan callback Google', /app\.get\('\/api\/admin\/providers\/:id\/google\/login'/.test(sumberServer) && /app\.get\('\/api\/admin\/providers\/:id\/google\/callback'/.test(sumberServer));
-cek('callback Google memakai state acak, bukan cookie sesi', /googleLoginStates\.get\(state\)/.test(sumberServer) && /sesi\.providerId !== req\.params\.id/.test(sumberServer));
+cek('server.js punya rute login dan callback Google', /app\.get\('\/api\/admin\/providers\/:id\/google\/login'/.test(sumberServer) && /app\.get\('\/api\/google\/callback'/.test(sumberServer));
+// Callback tetap satu alamat untuk semua akun, jadi provider tujuan HARUS datang dari `state` —
+// bukan dari URL yang bisa ditebak siapa saja.
+cek('callback Google memakai state acak, bukan cookie sesi', /googleLoginStates\.get\(state\)/.test(sumberServer) && /get\(sesi\.providerId\)/.test(sumberServer) && !/sesi\.providerId !== req\.params\.id/.test(sumberServer));
 cek('access token OAuth dibuat dari refresh token', /grant_type: 'refresh_token'/.test(sumberServer) && /prompt', 'consent'/.test(sumberServer));
 console.log(gagal ? `GAGAL: ${gagal} pemeriksaan.` : 'Semua uji lulus.');
 process.exitCode = gagal ? 1 : 0;

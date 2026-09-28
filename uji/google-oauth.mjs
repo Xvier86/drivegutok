@@ -190,15 +190,15 @@ try {
   const login = await api(`/api/admin/providers/${providerId}/google/login`, { redirect: 'manual', headers: { cookie } });
   const urlIzin = new URL(login.headers.get('location') || 'http://kosong.invalid');
   const state = urlIzin.searchParams.get('state') || '';
-  const redirectUri = `${ALAMAT_PUBLIK}/api/admin/providers/${providerId}/google/callback`;
+  const redirectUri = `${ALAMAT_PUBLIK}/api/google/callback`;
   cek('login Google mengalihkan ke halaman persetujuan', login.status === 302 && urlIzin.origin === alamatGoogle && urlIzin.pathname === '/o/oauth2/v2/auth', `status=${login.status} ${urlIzin.href}`);
   cek('permintaan izin lengkap (client_id, drive, offline, consent, state)', urlIzin.searchParams.get('client_id') === 'CID-uji' && urlIzin.searchParams.get('scope') === 'https://www.googleapis.com/auth/drive' && urlIzin.searchParams.get('access_type') === 'offline' && urlIzin.searchParams.get('prompt') === 'consent' && state.length >= 16, urlIzin.search);
   cek('redirect URI memakai PUBLIC_BASE_URL (bukan alamat permintaan yang masuk)', urlIzin.searchParams.get('redirect_uri') === redirectUri, urlIzin.searchParams.get('redirect_uri') || '(kosong)');
 
-  const stateSalah = await api(`/api/admin/providers/${providerId}/google/callback?code=CODE-uji&state=state-palsu`, { redirect: 'manual' });
+  const stateSalah = await api(`/api/google/callback?code=CODE-uji&state=state-palsu`, { redirect: 'manual' });
   cek('callback dengan state palsu ditolak', stateSalah.status === 400, `status=${stateSalah.status}`);
 
-  const callback = await api(`/api/admin/providers/${providerId}/google/callback?code=CODE-uji&state=${encodeURIComponent(state)}`, { redirect: 'manual' });
+  const callback = await api(`/api/google/callback?code=CODE-uji&state=${encodeURIComponent(state)}`, { redirect: 'manual' });
   // Setelah callback, halaman konfirmasi milik aplikasi yang dikirim (bukan pengalihan kosong): Owner
   // harus langsung tahu hasilnya — akun tersambung, penyimpanan terbaca, provider dinyalakan.
   const halamanCallback = await callback.text();
@@ -271,7 +271,7 @@ cek('provider baru sudah berisi kredensial server (tanpa isi apa pun)', provider
   cek('setelah provider dibuat, langsung menuju halaman izin Google', loginKlik.status === 302 && izinKlik.origin === alamatGoogle && izinKlik.pathname === '/o/oauth2/v2/auth' && stateKlik.length >= 16, `status=${loginKlik.status} url=${izinKlik.href.slice(0, 80)}`);
   // Callback: folder kerja harus dibuat otomatis (pemilik tidak menyiapkan folder) dan provider
   // langsung aktif dengan kuota terbaca.
-  const callbackKlik = await fetch(`${dasar}/api/admin/providers/${idProviderKlik}/google/callback?code=CODE-uji&state=${encodeURIComponent(stateKlik)}`);
+  const callbackKlik = await fetch(`${dasar}/api/google/callback?code=CODE-uji&state=${encodeURIComponent(stateKlik)}`);
   const halamanKlik = await callbackKlik.text();
   cek('callback membuat folder kerja otomatis', jejakFolderBaru.length === 1 && /Gutok Drive/.test(jejakFolderBaru[0]), `permintaan_buat_folder=${jejakFolderBaru.length} isi=${(jejakFolderBaru[0] || '').slice(0, 60)}`);
   const sesudahKlik = await providerDari(cookie, idProviderKlik);

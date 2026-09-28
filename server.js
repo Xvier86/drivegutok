@@ -1224,7 +1224,10 @@ app.get('/api/admin/overview', requireUser, ownerOnly, (_req, res) => {
     LEFT JOIN (SELECT owner_id, COUNT(*) AS jumlah, COALESCE(SUM(size), 0) AS bytes FROM files WHERE deleted_at IS NULL GROUP BY owner_id) f ON f.owner_id = u.id
     LEFT JOIN (SELECT owner_id, COUNT(*) AS jumlah FROM folders WHERE deleted_at IS NULL GROUP BY owner_id) d ON d.owner_id = u.id
     ORDER BY COALESCE(f.bytes, 0) DESC, u.username`).all();
-  return json(res, { users: db.prepare('SELECT id, email, username, role, status, created_at FROM users ORDER BY created_at DESC').all(), files: db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM files WHERE deleted_at IS NULL').get(), fileUsers, providers: providers.map(providerStatusForView), logs: db.prepare('SELECT audit_logs.*, users.username FROM audit_logs JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 8').all() });
+  // googleOAuthBawaan: dipakai UI untuk menampilkan alamat redirect yang perlu didaftarkan sekali.
+  // Hanya client ID yang dikirim (bukan rahasia, tampil di URL izin) — client SECRET tidak pernah.
+  const bawaanOAuth = kredensialOAuth();
+  return json(res, { users: db.prepare('SELECT id, email, username, role, status, created_at FROM users ORDER BY created_at DESC').all(), files: db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM files WHERE deleted_at IS NULL').get(), fileUsers, providers: providers.map(providerStatusForView), googleOAuthBawaan: bawaanOAuth.clientId ? { clientId: bawaanOAuth.clientId, redirectUri: alamatPublik() ? `${alamatPublik()}/api/google/callback` : null } : null, logs: db.prepare('SELECT audit_logs.*, users.username FROM audit_logs JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 8').all() });
 });
 // Owner melihat berkas MILIK USER LAIN — hanya baca. Berkas disimpan per namespace `owner_id`, jadi
 // dashboard biasa (yang selalu dibatasi `req.user.id`) memang tidak memuatnya; rute ini membuka
@@ -1326,9 +1329,8 @@ app.patch('/api/admin/providers/:id', requireUser, ownerOnly, async (req, res) =
 // (GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET), langkah itu hilang sepenuhnya — server
 // memakai kredensial sendiri, dan yang diminta ke pemilik hanya persetujuan akun.
 //
-// Redirect URI TETAP per-provider (`.../providers/<id>/google/callback`) karena URI itulah yang
-// sudah terbukti berfungsi di produksi; menggantinya dengan satu URI tetap hanya menambah risiko
-// "redirect_uri_mismatch" yang sudah terbukti tidak bisa diverifikasi dari luar.
+// Redirect URI memakai SATU alamat tetap (`/api/google/callback`) supaya pemilik tidak perlu
+// mendaftarkan alamat baru setiap menambah akun — lihat catatan di googleRedirectUri().
 const kredensialOAuth = () => ({
   clientId: (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim(),
   clientSecret: (process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim(),
@@ -1349,13 +1351,23 @@ async function buatFolderKerja(config) {
 }
 const googleLoginStates = new Map();
 const GOOGLE_LOGIN_TTL_MS = 10 * 60 * 1000;
+// Alamat publik situs, kalau sudah diketahui dari konfigurasi. Kosong berarti belum disetel — dan
+// pemanggil yang butuh alamat pasti (mis. halaman Kendali yang menampilkan alamat untuk didaftarkan
+// ke Google) harus memperlakukannya sebagai "belum tahu", bukan menebak dari permintaan yang masuk.
+const alamatPublik = () => (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 const escapeHtml = (nilai) => String(nilai).replace(/[&<>"']/g, (huruf) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[huruf]));
 // Redirect URI harus SAMA PERSIS dengan yang didaftarkan di Google Cloud Console. Di balik reverse
 // proxy (nginx/Cloudflare) req.protocol masih 'http', jadi sediakan PUBLIC_BASE_URL untuk
 // menimpanya, mis. PUBLIC_BASE_URL=https://drive.contoh.com.
-function googleRedirectUri(req, providerId) {
-  const dasar = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
-  return `${dasar}/api/admin/providers/${providerId}/google/callback`;
+//
+// SATU URI TETAP, bukan satu per provider. Google tidak mengenal wildcard pada redirect URI, jadi
+// URI yang memuat id provider memaksa pemilik mendaftarkan alamat baru setiap kali menambah akun —
+// persis kerumitan yang ingin dihapus. Dengan alamat tetap ini, sekali daftar berlaku untuk semua
+// akun berikutnya. Provider tujuan tetap dipastikan lewat `state` di callback, jadi tidak ada
+// kehilangan keamanan. `providerId` tinggal untuk kompatibilitas pemanggil lama.
+function googleRedirectUri(req, _providerId) {
+  const dasar = alamatPublik() || `${req.protocol}://${req.get('host')}`;
+  return `${dasar}/api/google/callback`;
 }
 function halamanGoogle(res, pesan, status = 200) {
   return res.status(status).type('html').send(`<!doctype html><meta charset="utf-8"><title>Login Google</title><p>${escapeHtml(pesan)}</p><p><a href="/">Kembali ke Gutok Drive</a></p>`);
@@ -1404,13 +1416,17 @@ app.get('/api/admin/providers/:id/google/login', requireUser, ownerOnly, (req, r
   izin.searchParams.set('state', state);
   return res.redirect(izin.toString());
 });
-app.get('/api/admin/providers/:id/google/callback', async (req, res) => {
+// Callback tetap SATU alamat (/api/google/callback) untuk semua akun. Provider tujuan dibaca dari
+// entri `state` yang dibuat rute login, bukan dari URL — itulah sumber kebenarannya, dan justru lebih
+// kuat daripada menebak dari alamat: alamat tetap bisa ditebak siapa saja, `state` tidak (sekali
+// pakai, kedaluwarsa 10 menit, terikat ke pemilik yang memulai).
+app.get('/api/google/callback', async (req, res) => {
   const state = String(req.query.state || '');
   const sesi = googleLoginStates.get(state);
   googleLoginStates.delete(state);
-  if (!sesi || sesi.expiresAt < Date.now() || sesi.providerId !== req.params.id) return halamanGoogle(res, 'Login Google tidak dikenal atau sudah kedaluwarsa. Ulangi dari halaman Kendali workspace.', 400);
+  if (!sesi || sesi.expiresAt < Date.now()) return halamanGoogle(res, 'Login Google tidak dikenal atau sudah kedaluwarsa. Ulangi dari halaman Kendali workspace.', 400);
   if (req.query.error) return halamanGoogle(res, `Google menolak permintaan: ${req.query.error}`, 400);
-  const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
+  const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(sesi.providerId);
   if (!provider) return halamanGoogle(res, 'Provider Google Drive tidak ditemukan.', 404);
   try {
     if (!req.query.code) throw new Error('Google tidak mengirim kode otorisasi.');
