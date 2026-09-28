@@ -217,6 +217,11 @@ kasus_update_code() {
   cek_sama "update-code.sh kini versi repo" "$(md5_berkas "$APP/update-code.sh")" "$(git -C "$APP" show "origin/$BRANCH:update-code.sh" | md5sum | cut -d' ' -f1)"
   cek_sama "secret disuntik ke ecosystem.config.cjs" "$(sed -n "s/^ *STORAGE_CONFIG_KEY: *'\(.*\)'.*/\1/p" "$APP/ecosystem.config.cjs" | head -1)" "SECRET-ASLI-UJI-1234567890"
   cek_sama "satu-satunya perubahan tracked: ecosystem.config.cjs (secret)" "$(git -C "$APP" status --porcelain --untracked-files=no | tr -d ' ')" "Mecosystem.config.cjs"
+  # Dua kegagalan senyap yang dulu terjadi: kode di disk baru tapi proses PM2 masih versi lama, dan
+  # GOOGLE_OAUTH_* ada di ecosystem.config.cjs tapi belum diterima proses. update-code.sh sekarang
+  # harus memuat ulang PM2 sendiri (startOrReload, bukan restart: restart tidak baca berkas ekosistem).
+  cek_ada "update-code.sh memuat ulang PM2 sendiri" "pm2 startOrReload ecosystem.config.cjs --update-env" "$LOG_UJI"
+  cek_ada "update-code.sh memeriksa aplikasi benar-benar menjawab" "curl -fsS -m 10 -o /dev/null http://127.0.0.1:3000/" "$LOG_UJI"
 }
 
 kasus_deploy() {

@@ -180,3 +180,29 @@ fi
 
 echo ">> Kode sekarang di commit:"
 git --no-pager log -1 --oneline
+
+# Muat ulang PM2 SETELAH kode dan env baru di disk. Ini langkah yang dulu hilang dua kali dan
+# menghasilkan dua kegagalan senyap:
+#   1) berkas di disk baru, tapi proses masih dari commit lama (UI menampilkan `undefined file`);
+#   2) GOOGLE_OAUTH_* ada di ecosystem.config.cjs tapi proses lama belum menerimanya.
+# `startOrReload` (bukan `restart`) yang dipakai karena `pm2 restart --update-env` mengambil env dari
+# SHELL saat itu dan TIDAK memuat ulang berkas ekosistem — variabel baru tidak akan masuk.
+if command -v pm2 >/dev/null 2>&1; then
+  echo ">> Memuat ulang PM2 dari ecosystem.config.cjs..."
+  pm2 startOrReload ecosystem.config.cjs --update-env >/dev/null 2>&1 || {
+    echo "!! pm2 startOrReload gagal. Kode sudah ditarik, tapi proses masih versi lama."
+    echo "!! Jalankan manual: pm2 startOrReload ecosystem.config.cjs --update-env"
+    exit 1
+  }
+  sleep 3
+  APP_PORT=$(grep -E '^\s*PORT' ecosystem.config.cjs | head -1 | grep -oE '[0-9]+' | head -1)
+  if curl -fsS -m 10 -o /dev/null "http://127.0.0.1:${APP_PORT:-3000}/"; then
+    echo ">> Aplikasi menjawab di port ${APP_PORT:-3000}."
+  else
+    echo "!! Aplikasi belum merespons di port ${APP_PORT:-3000} setelah kode ditarik dan PM2 dimuat ulang."
+    echo "!! Periksa: pm2 logs gutok-drive --lines 50"
+    exit 1
+  fi
+else
+  echo "!! pm2 tidak ditemukan di PATH user ini. Kode sudah ditarik; jalankan pm2 startOrReload manual."
+fi
