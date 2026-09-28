@@ -1156,7 +1156,43 @@ app.get('/api/admin/overview', requireUser, ownerOnly, (_req, res) => {
   // Kuota asli diambil di latar belakang; respons memakai angka yang sudah tersimpan supaya
   // halaman Owner control terbuka seketika walau provider sedang lambat/tidak merespons.
   for (const provider of providers) refreshCapacityInBackground(provider);
-  return json(res, { users: db.prepare('SELECT id, email, username, role, status, created_at FROM users ORDER BY created_at DESC').all(), files: db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM files WHERE deleted_at IS NULL').get(), providers: providers.map(providerStatusForView), logs: db.prepare('SELECT audit_logs.*, users.username FROM audit_logs JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 8').all() });
+  // Ringkasan berkas per user: berkas disimpan per namespace (`owner_id`), jadi tanpa query ini Owner
+  // hanya melihat miliknya sendiri dan berkas member seolah tidak ada.
+  const fileUsers = db.prepare(`SELECT u.id, u.username, u.email, u.role, u.status, u.created_at,
+      COALESCE(f.jumlah, 0) AS file_count, COALESCE(f.bytes, 0) AS file_bytes, COALESCE(d.jumlah, 0) AS folder_count
+    FROM users u
+    LEFT JOIN (SELECT owner_id, COUNT(*) AS jumlah, COALESCE(SUM(size), 0) AS bytes FROM files WHERE deleted_at IS NULL GROUP BY owner_id) f ON f.owner_id = u.id
+    LEFT JOIN (SELECT owner_id, COUNT(*) AS jumlah FROM folders WHERE deleted_at IS NULL GROUP BY owner_id) d ON d.owner_id = u.id
+    ORDER BY COALESCE(f.bytes, 0) DESC, u.username`).all();
+  return json(res, { users: db.prepare('SELECT id, email, username, role, status, created_at FROM users ORDER BY created_at DESC').all(), files: db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM files WHERE deleted_at IS NULL').get(), fileUsers, providers: providers.map(providerStatusForView), logs: db.prepare('SELECT audit_logs.*, users.username FROM audit_logs JOIN users ON users.id = audit_logs.actor_id ORDER BY audit_logs.created_at DESC LIMIT 8').all() });
+});
+// Owner melihat berkas MILIK USER LAIN — hanya baca. Berkas disimpan per namespace `owner_id`, jadi
+// dashboard biasa (yang selalu dibatasi `req.user.id`) memang tidak memuatnya; rute ini membuka
+// namespace user terpilih untuk Owner saja. Tidak ada hapus/pindah di sini supaya satu klik salah
+// tidak menghapus berkas orang lain; setiap pembacaan dicatat ke audit log.
+app.get('/api/admin/files', requireUser, ownerOnly, (req, res) => {
+  const user = db.prepare('SELECT id, email, username, role, status, created_at FROM users WHERE id = ?').get(String(req.query.userId || ''));
+  if (!user) return json(res, { error: 'User tidak ditemukan.' }, 404);
+  const requested = req.query.folderId || null;
+  const current = requested ? visibleFolder(user.id, requested) : null;
+  const folderId = current ? current.id : null;
+  const folders = db.prepare('SELECT id, name, parent_id, created_at FROM folders WHERE owner_id = ? AND parent_id IS ? AND deleted_at IS NULL ORDER BY name').all(user.id, folderId);
+  const files = db.prepare("SELECT id, name, mime_type, size, provider, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, expires_at FROM files WHERE owner_id = ? AND folder_id IS ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY uploaded_at DESC").all(user.id, folderId, now());
+  const stats = db.prepare("SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM files WHERE owner_id = ? AND deleted_at IS NULL").get(user.id);
+  const trashCount = db.prepare('SELECT (SELECT COUNT(*) FROM files WHERE owner_id = ? AND deleted_at IS NOT NULL) + (SELECT COUNT(*) FROM folders WHERE owner_id = ? AND deleted_at IS NOT NULL) AS count').get(user.id, user.id).count;
+  audit(req.user.id, 'view_user_files', 'user', user.id);
+  return json(res, { user, folderId, folders, files, stats, path: folderPath(user.id, folderId), trashCount });
+});
+// Unduhan lintas-user untuk Owner. Dipisah dari /api/files/:id/download (yang sengaja dibatasi
+// `owner_id = req.user.id`) supaya privasi antar-member tidak ikut terbuka: hanya Owner, dan
+// pembacaan berkas orang lain selalu tercatat.
+app.get('/api/admin/files/:id/download', requireUser, ownerOnly, async (req, res) => {
+  const file = db.prepare('SELECT * FROM files WHERE id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)').get(req.params.id, now());
+  const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider);
+  if (!file?.remote_file_id || !provider) return json(res, { error: 'File tidak ditemukan.' }, 404);
+  audit(req.user.id, 'download_user_file', 'file', file.id);
+  try { return await sendRemoteFile(res, file, provider, 'attachment', req.headers.range); }
+  catch (error) { if (res.headersSent) return res.end(); return json(res, { error: error.message }, 502); }
 });
 app.post('/api/admin/users', requireUser, ownerOnly, async (req, res) => { const { email, username, password } = req.body; if (typeof email !== 'string' || !emailPattern.test(email.trim()) || typeof username !== 'string' || !username.trim() || typeof password !== 'string' || password.length < 8 || password.length > 1024) return json(res, { error: 'Data invite belum lengkap.' }, 400); const user = { id: id(), email: email.trim().toLowerCase(), username: username.trim(), role: 'user', status: 'active', created_at: now() }; const passwordHash = await hashPassword(password); try { db.prepare('INSERT INTO users (id, email, username, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(user.id, user.email, user.username, passwordHash, user.role, user.status, user.created_at); audit(req.user.id, 'invite', 'user', user.id); return json(res, user, 201); } catch { return json(res, { error: 'Email atau username sudah digunakan.' }, 409); } });
 // Cabut/pulihkan akses member. `requireUser` sudah menolak baris user yang statusnya bukan 'active'

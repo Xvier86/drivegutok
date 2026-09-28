@@ -94,6 +94,34 @@ try {
   buatFile('svg', 'image/svg+xml');
   buatFile('html', 'text/html');
   buatFile('png', 'image/png');
+  // Berkas milik MEMBER, dipakai untuk menguji batas "Owner boleh melihat, member tidak boleh melihat
+  // berkas orang lain". Dua namespace berbeda disengaja: tanpa batas ini, siapa pun yang login bisa
+  // membaca penyimpanan seluruh pengguna.
+  db.prepare('INSERT INTO files (id, owner_id, name, mime_type, size, provider, remote_file_id, uploaded_by, uploaded_at, cdn_enabled, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run('milik-member', member.id, 'rahasia-member.txt', 'text/plain', 11, 'fixture', 'telegram:png', member.id, new Date().toISOString(), 0, null);
+
+  await cek('Owner bisa melihat daftar berkas member', async () => {
+    const res = await api(`/api/admin/files?userId=${member.id}`, { headers: { cookie } });
+    assert.equal(res.status, 200, `status=${res.status}`);
+    const data = await res.json();
+    assert.equal(data.user.username, 'member');
+    assert.equal(data.files.length, 1);
+    assert.equal(data.files[0].name, 'rahasia-member.txt');
+  });
+  await cek('Owner bisa mengunduh berkas member lewat rute khusus Owner', async () => {
+    const res = await api('/api/admin/files/milik-member/download', { headers: { cookie } });
+    assert.equal(res.status, 200, `status=${res.status}`);
+    assert.equal(await res.text(), isiFile.get('png'));
+  });
+  await cek('member TIDAK bisa membaca berkas user lain', async () => {
+    for (const jalur of [`/api/admin/files?userId=${owner.id}`, '/api/admin/files/milik-member/download', `/api/admin/files?userId=${member.id}`]) {
+      const res = await api(jalur, { headers: { cookie: cookieMember } });
+      assert.equal(res.status, 403, `${jalur} -> ${res.status}`);
+    }
+  });
+  await cek('anonim TIDAK bisa membaca berkas user lewat rute Owner', async () => {
+    const res = await api(`/api/admin/files?userId=${member.id}`);
+    assert.equal(res.status, 401, `status=${res.status}`);
+  });
 
   await cek('SVG CDN memakai sandbox tanpa script/same-origin', async () => {
     const res = await api('/cdn/slug-svg');

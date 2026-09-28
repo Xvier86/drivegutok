@@ -36,8 +36,11 @@ const jawaban = {
     { action: 'update_email', target_type: 'user', username: 'vier', created_at: '2026-09-11T12:00:00Z' },
   ] },
   '/api/trash': { files: [file], folders: [folder], counts: { all: 2, files: 1, folders: 1 } },
+  // Penjelajah berkas user (Owner): satu folder + satu berkas supaya remah lokasi, kartu, dan tombol
+  // unduh benar-benar dirender.
+  '/api/admin/files': { user: { id: 'u2', username: 'tamu', email: 't@b.c', role: 'user', status: 'active', created_at: '2026-09-13T00:00:00Z' }, folderId: null, folders: [{ id: 'd2', name: 'Arsip tamu', parent_id: null, created_at: '2026-09-13T00:00:00Z' }], files: [{ id: 'f9', name: 'catatan-tamu.txt', mime_type: 'text/plain', size: 1234, provider: 'p1', uploaded_by: 'u2', uploaded_at: '2026-09-13T00:00:00Z', cdn_enabled: 0, cdn_slug: null, encrypted: 0, expires_at: null }], stats: { files: 1, bytes: 1234 }, path: [], trashCount: 0 },
 };
-globalThis.fetch = async (url) => ({ ok: true, status: 200, headers: new Map([['content-type', 'application/json']]), json: async () => jawaban[String(url).split('?')[0]] || {} });
+globalThis.fetch = async (url) => ({ ok: true, status: 200, headers: new Map([['content-type', 'application/json']]), json: async () => jawaban[(String(url.pathname || url).split('?')[0])] || {} });
 
 const { rute } = await import('../assets/js/router.js');
 const { state } = await import('../assets/js/state.js');
@@ -46,6 +49,7 @@ const admin = await import('../assets/js/views/admin.js');
 const trash = await import('../assets/js/views/trash.js');
 const akun = await import('../assets/js/views/akun.js');
 const login = await import('../assets/js/views/login.js');
+const berkasUser = await import('../assets/js/views/berkas-user.js');
 
 state.user = { id: 'u1', username: 'vier', email: 'vier@contoh.invalid', role: 'owner' };
 Object.assign(rute, { dashboard: files.renderDashboard, admin: admin.renderAdmin, trash: trash.renderTrash, akun: akun.renderAkun, login: login.renderLogin });
@@ -61,6 +65,9 @@ const WAJIB = {
   // Pengaturan akun: dua formulir, masing-masing dengan kolom password saat ini (tanpa itu halaman ini
   // hanya jadi teater — servernya sendiri yang menjaga, lihat uji/akun.mjs).
   renderAkun: ['form-akun-email', 'form-akun-sandi', 'akun-forms', 'akun-view', 'Pengaturan akun', 'name="currentPassword"', 'name="newPassword"', 'name="confirmPassword"', 'minlength="8"', 'vier@contoh.invalid'],
+  // Penjelajah berkas user: identitas pemilik, remah lokasi, kartu berkas + folder, dan tombol unduh
+  // lewat rute khusus Owner. Tanpa ini layarnya bisa "jalan" tapi tidak menampilkan apa pun.
+  renderBerkasUser: ['pb-kembali-user', 'pb-kembali-kendali', 'pb-crumb-nav', 'pb-crumb', 'tamu', 't@b.c', 'Arsip tamu', 'catatan-tamu.txt', '/api/admin/files/f9/download', 'file-list', 'Hanya lihat'],
 };
 // Jejak markup lama yang harus hilang: nama/status provider per baris dan bilah individualnya.
 const JEJAK_PROVIDER = ['storage-item', 'storage-row', 'storage-list', 'storage-bar', 'storage-seg', 'class="progress', 'provider-mini', 'provider-label'];
@@ -73,7 +80,7 @@ const tangkapan = {};
 let pindahDasbor = 0;
 const dasborAsli = rute.dashboard;
 rute.dashboard = async () => { pindahDasbor += 1; };
-for (const [nama, panggil] of [['renderDashboard', files.renderDashboard], ['bindDashboard', files.bindDashboard], ['renderTrash', trash.renderTrash], ['renderAdmin', admin.renderAdmin], ['renderAkun', akun.renderAkun], ['bindAkun', akun.bindAkun], ['renderLogin', login.renderLogin]]) {
+for (const [nama, panggil] of [['renderDashboard', files.renderDashboard], ['bindDashboard', files.bindDashboard], ['renderTrash', trash.renderTrash], ['renderAdmin', admin.renderAdmin], ['renderAkun', akun.renderAkun], ['bindAkun', akun.bindAkun], ['renderLogin', login.renderLogin], ['renderBerkasUser', () => berkasUser.renderBerkasUser('u2', '')]]) {
   try { await panggil(); tangkapan[nama] = layar; console.log(`  ok  ${nama}`); } catch (error) { console.error(`  GAGAL  ${nama}: ${error.message}`); gagal += 1; }
 }
 rute.dashboard = dasborAsli;
@@ -100,8 +107,11 @@ else { console.error(`  GAGAL  dot provider ${jumlahDot}/${jumlahProvider}, bari
 // Dua tombol per provider (konfigurasi + aktif/nonaktif) dan satu tombol per member non-owner.
 const jumlahMemberBiasa = jawaban['/api/admin/overview'].users.filter((user) => user.role !== 'owner').length;
 const jumlahGhost = (adminMarkup.match(/class="ghost /g) || []).length;
-if (jumlahGhost === jumlahProvider * 2 + jumlahMemberBiasa && !/class="secondary (provider|member)/.test(adminMarkup)) console.log(`  ok  aksi provider/member seragam satu gaya .ghost (${jumlahGhost})`);
-else { console.error(`  GAGAL  aksi Owner control masih campur gaya tombol (ghost: ${jumlahGhost}, harus ${jumlahProvider * 2 + jumlahMemberBiasa})`); gagal += 1; }
+// Dua tombol per provider + dua per member non-owner (Lihat berkas + Cabut/Pulihkan), ditambah satu
+// "Lihat berkas" untuk Owner: Owner juga bisa berisi berkas, jadi barisnya pun perlu jalan masuk.
+const jumlahGhostHarus = jumlahProvider * 2 + jumlahMemberBiasa * 2 + 1;
+if (jumlahGhost === jumlahGhostHarus && !/class="secondary (provider|member)/.test(adminMarkup)) console.log(`  ok  aksi provider/member seragam satu gaya .ghost (${jumlahGhost})`);
+else { console.error(`  GAGAL  aksi Owner control masih campur gaya tombol (ghost: ${jumlahGhost}, harus ${jumlahGhostHarus})`); gagal += 1; }
 // Telegram tidak melaporkan kuota: badge-nya menyebut byte yang terkirim, dan provider sehat tidak
 // boleh punya badge galat (dulu selalu merah "Kuota error" justru karena kuotanya tidak ada).
 const badgeGalat = (adminMarkup.match(/class="badge error"/g) || []).length;

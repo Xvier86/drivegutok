@@ -97,3 +97,14 @@
   .login-statement > p:last-child, .login-footnote, .login-statement .workspace-label { display: none; }
   .login-card { margin-block: var(--space-4); padding: var(--space-5); }
 }
+
+/* Penjelajah berkas user (Owner). Remah lokasi memakai tombol .ghost supaya bisa diklik; pemisahnya
+   sendiri hanya tipografi, jadi tidak perlu kelas tombol — dan nav-nya dibiarkan berbalut supaya
+   tidak menambah gulungan di topbar sempit. */
+.pb-crumb-nav { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-width: 0; }
+.pb-crumb-nav .pb-crumb { min-height: 32px; padding: 2px 8px; }
+.pb-crumb-nav [aria-current="page"] { color: var(--paper); font-size: var(--fs-md); }
+.pb-pemisah { color: var(--muted); }
+/* Tombol "Lihat berkas" di baris member: ikut aturan .ghost, hanya dirapatkan agar satu baris dengan
+   badge lain tetap rapi. */
+.member-files { min-height: 32px; padding: 2px 8px; }

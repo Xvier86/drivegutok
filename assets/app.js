@@ -6,10 +6,14 @@ import { renderLogin } from './js/views/login.js';
 import { bindAkun, renderAkun } from './js/views/akun.js';
 import { bindCdnUpload, bindDashboard, bindFileFolderActions, bindMediaPreview, bindProviderPicker, bindUploadOptions, renderDashboard } from './js/views/files.js';
 import { renderAdmin } from './js/views/admin.js';
+import { renderBerkasUser } from './js/views/berkas-user.js';
 import { renderTrash } from './js/views/trash.js';
 
 rute.dashboard = renderDashboard;
 rute.admin = renderAdmin;
+// Penjelajah berkas semua user (Owner saja). Server menolak peran lain lewat `ownerOnly`, jadi rute
+// ini tidak menambah permukaan akses baru — hanya jalan menuju data yang sudah boleh dibaca Owner.
+rute.adminBerkas = renderBerkasUser;
 rute.trash = renderTrash;
 rute.akun = renderAkun;
 rute.login = renderLogin;
