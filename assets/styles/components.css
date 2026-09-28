@@ -263,7 +263,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .storage-total { font-family: var(--f-mono); color: var(--muted-strong); }
 /* Alasan kuota tidak dilaporkan (mis. Google service account) — teks kecil di bawah angka, satu baris
    selebar kartu, bukan bagian dari baris angka supaya tetap terbaca di sidebar sempit. */
-.storage-note { grid-column: 1 / -1; grid-row: 3; margin: 0; font-size: var(--fs-xs); line-height: 1.4; }
+.storage-note { grid-column: 1 / -1; grid-row: 3; margin: 0; font-size: var(--fs-xs); line-height: var(--lh-meta); }
 /* Lingkaran: jalur penuh selalu terlihat (--amber-unlit), busur terpakai menimpanya (--amber-glow).
    grid + place-items supaya angka persen tepat di tengah tanpa position: absolute. -90deg membuat
    busur mulai dari puncak, bukan dari jam tiga. */

@@ -1,10 +1,10 @@
 /* Gutok workspace: a persistent rail, one working canvas, warm hairlines. */
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; width: 100%; min-height: 100%; }
-body { background: var(--ink-soft); color: var(--paper); font-family: var(--font-ui); font-size: var(--fs-body); line-height: 1.55; -webkit-font-smoothing: antialiased; }
+body { background: var(--ink-soft); color: var(--paper); font-family: var(--font-ui); font-size: var(--fs-body); line-height: var(--lh-body); -webkit-font-smoothing: antialiased; }
 body:has(dialog[open]) { overflow: hidden; }
 [hidden] { display: none !important; }
-h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.025em; }
+h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: var(--ls-title); line-height: var(--lh-title); }
 h2 { font-size: var(--fs-lg); }
 h3 { font-size: var(--fs-body); }
 p { margin: 0; }
@@ -67,7 +67,7 @@ body.is-drawer { overflow: hidden; }
 .greeting { font-size: var(--fs-display); line-height: 1.2; }
 .greeting-sm { font-size: var(--fs-display); margin-top: var(--space-2); }
 .view-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding-top: var(--space-3); }
-.view-title { font-size: var(--fs-display); line-height: 1.2; overflow-wrap: anywhere; }
+.view-title { font-size: var(--fs-display); line-height: var(--lh-display); letter-spacing: var(--ls-display); overflow-wrap: anywhere; }
 .view-head .subtle, .topbar .subtle { margin-top: var(--space-2); }
 .action-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .workspace-label { margin: 0 0 var(--space-3); padding-inline: var(--space-3); color: var(--muted); font-size: var(--fs-xs); letter-spacing: 0.075em; text-transform: uppercase; }
