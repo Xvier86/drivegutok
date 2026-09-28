@@ -1360,6 +1360,19 @@ function googleRedirectUri(req, providerId) {
 function halamanGoogle(res, pesan, status = 200) {
   return res.status(status).type('html').send(`<!doctype html><meta charset="utf-8"><title>Login Google</title><p>${escapeHtml(pesan)}</p><p><a href="/">Kembali ke Gutok Drive</a></p>`);
 }
+// Hapus provider storage. Dulu tidak ada sama sekali, sehingga provider yang ditambahkan keliru
+// (atau akun Google yang batal disambungkan) hanya bisa dinonaktifkan, tidak pernah bisa dibuang —
+// dan tombol "Tambah Google Drive" yang gagal di tengah jalan meninggalkan baris kosong permanen.
+// Ditahan kalau provider masih menyimpan berkas, supaya tidak ada berkas yang kehilangan pemiliknya.
+app.delete('/api/admin/providers/:id', requireUser, ownerOnly, (req, res) => {
+  const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
+  if (!provider) return json(res, { error: 'Provider tidak ditemukan.' }, 404);
+  const dipakai = db.prepare('SELECT COUNT(*) AS jumlah FROM files WHERE provider = ?').get(provider.id).jumlah;
+  if (dipakai > 0) return json(res, { error: `Provider masih menyimpan ${dipakai} berkas. Pindahkan atau hapus berkasnya dulu.` }, 409);
+  db.prepare('DELETE FROM providers WHERE id = ?').run(provider.id);
+  audit(req.user.id, 'delete', 'provider', provider.id);
+  return res.status(204).end();
+});
 app.get('/api/admin/providers/:id/google/login', requireUser, ownerOnly, (req, res) => {
   const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(req.params.id);
   if (!provider || provider.kind !== 'gdrive') return json(res, { error: 'Provider Google Drive tidak ditemukan.' }, 404);

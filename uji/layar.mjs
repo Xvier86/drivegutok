@@ -108,8 +108,9 @@ else { console.error(`  GAGAL  dot provider ${jumlahDot}/${jumlahProvider}, bari
 const jumlahMemberBiasa = jawaban['/api/admin/overview'].users.filter((user) => user.role !== 'owner').length;
 const jumlahGhost = (adminMarkup.match(/class="ghost /g) || []).length;
 // Dua tombol per provider + dua per member non-owner (Lihat berkas + Cabut/Pulihkan), ditambah satu
-// "Lihat berkas" untuk Owner: Owner juga bisa berisi berkas, jadi barisnya pun perlu jalan masuk.
-const jumlahGhostHarus = jumlahProvider * 2 + jumlahMemberBiasa * 2 + 1;
+// "Lihat berkas" untuk Owner, dan satu "Hapus" per provider. Owner juga bisa berisi berkas, jadi
+// barisnya pun perlu jalan masuk.
+const jumlahGhostHarus = jumlahProvider * 3 + jumlahMemberBiasa * 2 + 1;
 if (jumlahGhost === jumlahGhostHarus && !/class="secondary (provider|member)/.test(adminMarkup)) console.log(`  ok  aksi provider/member seragam satu gaya .ghost (${jumlahGhost})`);
 else { console.error(`  GAGAL  aksi Owner control masih campur gaya tombol (ghost: ${jumlahGhost}, harus ${jumlahGhostHarus})`); gagal += 1; }
 // Telegram tidak melaporkan kuota: badge-nya menyebut byte yang terkirim, dan provider sehat tidak

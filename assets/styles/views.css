@@ -115,3 +115,7 @@
 .file-card.shared .file-meta { color: var(--gold-dark); }
 /* Tombol izin yang sedang aktif (sudah dibagikan) memakai nada emas yang sama dengan status "on". */
 .icon-btn.on { color: var(--gold); }
+
+/* Tombol hapus provider: nada bahaya hanya muncul saat disorot (aturan .ghost.danger), tapi warnanya
+   dibiarkan redup sejak awal supaya tidak tampak seperti aksi utama di deretan tombol provider. */
+.provider-hapus { color: var(--danger-dim); }
