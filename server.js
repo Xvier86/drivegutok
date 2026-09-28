@@ -232,9 +232,26 @@ async function readProviderCapacity(provider) {
   }
   if (provider.kind === 'gdrive') {
     const accessToken = await getGoogleAccessToken(config);
-    const response = await fetch(`${GOOGLE_API}/drive/v3/about?fields=storageQuota`, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
+    const response = await fetch(`${GOOGLE_API}/drive/v3/about?fields=storageQuota&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) });
     if (!response.ok) return { usedBytes: provider.used_bytes, capacityBytes: provider.capacity_bytes, capacitySource: 'error', capacityError: `Google Drive API ${response.status}` };
     const quota = (await response.json()).storageQuota || {};
+    // Akun yang dipakai lewat service account TIDAK punya kuota sendiri, dan kuota Shared Drive
+    // dipool per organisasi sehingga about.get tidak melaporkannya (dokumentasi Google: "storage
+    // usage is managed against the organization's pooled storage rather than an individual user's
+    // personal My Drive storage quota"). Sebelumnya cabang ini mengembalikan `Number(undefined||0)`
+    // untuk usage dan limit, lalu angka 0 itu ditandai capacitySource 'google-drive' — jadi kuota
+    // yang "sudah terbaca" ternyata 0/0 dan kapasitas manual yang diisi Owner ikut tertimpa 0 di
+    // layar. Kalau Google tidak melaporkan apa pun, jangan mengarang angka: pakai angka tersimpan
+    // dan beri keterangan, bukan galat (provider ini tetap sehat dan tetap bisa mengunggah).
+    if (!quota.limit && !quota.usage) {
+      return {
+        usedBytes: provider.used_bytes,
+        capacityBytes: provider.capacity_bytes,
+        capacitySource: 'google-drive-tidak-dilaporkan',
+        capacityError: null,
+        capacityNote: 'Google tidak melaporkan kuota untuk akun ini (service account tidak punya kuota sendiri; kuota Shared Drive dipool per organisasi). Angka di bawah berasal dari kapasitas yang diisi Owner dan pemakaian yang dicatat aplikasi.',
+      };
+    }
     return { usedBytes: Number(quota.usage || 0), capacityBytes: Number(quota.limit || 0), capacitySource: 'google-drive' };
   }
   if (provider.kind === 'mega') {
@@ -294,10 +311,10 @@ const capacityInFlight = new Set();
 function providerStatusForView(provider) {
   // Provider yang dinonaktifkan tidak dihubungi sama sekali: kalau akunnya bermasalah (misalnya
   // akun Mega diblokir), memanggilnya hanya memperlambat halaman tanpa manfaat.
-  if (!Number(provider.enabled)) return { ...providerStatus(provider), used_bytes: provider.used_bytes, capacity_bytes: provider.capacity_bytes, capacitySource: 'disabled', capacityError: null };
+  if (!Number(provider.enabled)) return { ...providerStatus(provider), used_bytes: provider.used_bytes, capacity_bytes: provider.capacity_bytes, capacitySource: 'disabled', capacityError: null, capacityNote: null };
   const cached = capacityCache.get(provider.id);
-  if (!cached) return { ...providerStatus(provider), used_bytes: provider.used_bytes, capacity_bytes: provider.capacity_bytes, capacitySource: 'tersimpan', capacityError: null };
-  return { ...providerStatus(provider), used_bytes: cached.usedBytes, capacity_bytes: cached.capacityBytes, capacitySource: cached.capacitySource, capacityError: cached.capacityError || null };
+  if (!cached) return { ...providerStatus(provider), used_bytes: provider.used_bytes, capacity_bytes: provider.capacity_bytes, capacitySource: 'tersimpan', capacityError: null, capacityNote: null };
+  return { ...providerStatus(provider), used_bytes: cached.usedBytes, capacity_bytes: cached.capacityBytes, capacitySource: cached.capacitySource, capacityError: cached.capacityError || null, capacityNote: cached.capacityNote || null };
 }
 function refreshCapacityInBackground(provider) {
   if (!Number(provider.enabled) || !providerStatus(provider).configured) return;
