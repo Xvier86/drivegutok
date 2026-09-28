@@ -108,3 +108,10 @@
 /* Tombol "Lihat berkas" di baris member: ikut aturan .ghost, hanya dirapatkan agar satu baris dengan
    badge lain tetap rapi. */
 .member-files { min-height: 32px; padding: 2px 8px; }
+
+/* Berkas/folder milik user lain yang dibagikan Owner: hanya bisa dilihat & diunduh, dan diberi tanda
+   tepi emas tipis supaya bedanya dari milik sendiri terlihat tanpa membaca meta. */
+.file-card.shared { border-color: var(--gold-dark); }
+.file-card.shared .file-meta { color: var(--gold-dark); }
+/* Tombol izin yang sedang aktif (sudah dibagikan) memakai nada emas yang sama dengan status "on". */
+.icon-btn.on { color: var(--gold); }

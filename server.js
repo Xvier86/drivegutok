@@ -72,7 +72,12 @@ for (const statement of [
   "ALTER TABLE files ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE files ADD COLUMN retention_type TEXT NOT NULL DEFAULT 'forever'",
   "ALTER TABLE files ADD COLUMN retention_value INTEGER",
-  "ALTER TABLE files ADD COLUMN expires_at TEXT"
+  "ALTER TABLE files ADD COLUMN expires_at TEXT",
+  // Berbagi Owner -> member: 0 = hanya Owner (bawaan), 1 = terlihat oleh semua member aktif.
+  // Ini satu-satunya jalan berkas Owner muncul di dashboard member; aturan penyaringan ada di
+  // `bolehDilihatMember()` supaya rute mana pun tidak bisa lupa memasangnya.
+  "ALTER TABLE files ADD COLUMN shared INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE folders ADD COLUMN shared INTEGER NOT NULL DEFAULT 0"
 ]) { try { db.exec(statement); } catch (error) { if (!error.message.includes('duplicate column name')) throw error; } }
 try { db.exec("ALTER TABLE providers ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'"); } catch (error) { if (!error.message.includes('duplicate column name')) throw error; }
 // Provider tidak lagi disemai otomatis: daftar storage hanya berisi provider yang benar-benar
@@ -877,20 +882,36 @@ app.patch('/api/account/password', requireUser, async (req, res) => {
 });
 app.get('/api/dashboard', requireUser, (req, res) => {
   const requestedFolderId = req.query.folderId || null;
-  // Folder yang sudah masuk Sampah (atau bukan milik user) tidak boleh jadi lokasi aktif,
-  // kalau tidak UI nyangkut menampilkan folder kosong yang sudah tidak ada.
+  const owner = req.user.role === 'owner';
+  // Berkas/folder Owner TIDAK terlihat member kecuali Owner menandainya `shared = 1`. Penyaringan
+  // dinyatakan sekali di sini dalam bentuk klausa SQL supaya tidak ada rute yang lupa memasangnya.
+  // Folder diperlakukan sama: folder Owner yang belum dibagikan tidak muncul, jadi isinya tidak bisa
+  // ditelusuri walaupun berkas di dalamnya sudah dibagikan (Owner membagikan item yang mau dilihat).
+  const visFile = owner ? '' : ' AND shared = 1';
+  const visFolder = owner ? '' : ' AND shared = 1';
+  // Owner masih boleh membuka folder pribadinya sendiri; member hanya folder yang dibagikan.
   const current = requestedFolderId ? visibleFolder(req.user.id, requestedFolderId) : null;
   const folderId = current ? current.id : null;
-  const folders = db.prepare('SELECT id, name, parent_id, created_at FROM folders WHERE owner_id = ? AND parent_id IS ? AND deleted_at IS NULL ORDER BY name').all(req.user.id, folderId);
-  const files = db.prepare("SELECT id, name, mime_type, size, provider, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at FROM files WHERE owner_id = ? AND folder_id IS ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY uploaded_at DESC").all(req.user.id, folderId, now());
+  const folders = db.prepare(`SELECT id, name, parent_id, created_at, shared, owner_id, (SELECT username FROM users WHERE id = folders.owner_id) AS owner_nama FROM folders WHERE owner_id = ? AND parent_id IS ? AND deleted_at IS NULL${visFolder} ORDER BY name`).all(req.user.id, folderId);
+  const files = db.prepare(`SELECT id, name, mime_type, size, provider, uploaded_by, uploaded_at, cdn_enabled, cdn_slug, encrypted, retention_type, retention_value, expires_at, shared, owner_id, (SELECT username FROM users WHERE id = files.owner_id) AS owner_nama FROM files WHERE owner_id = ? AND folder_id IS ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)${visFile} ORDER BY uploaded_at DESC`).all(req.user.id, folderId, now());
   // Dashboard memakai sumber kuota yang sama dengan Owner control supaya angka provider tidak
   // tertinggal dari kolom `used_bytes` di database. Pembaruan kuota asli berjalan di latar
   // belakang dengan batas waktu, jadi halaman tidak menunggu provider yang lambat/diblokir.
   const providers = db.prepare("SELECT * FROM providers WHERE kind != 'local' ORDER BY name").all();
   for (const provider of providers) refreshCapacityInBackground(provider);
-  const stats = db.prepare("SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM files WHERE owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(req.user.id, now());
+  // Statistik mengikuti apa yang benar-benar terlihat: member tidak boleh melihat ukuran/jumlah
+  // berkas Owner yang belum dibagikan — angka itu sendiri sudah membocorkan informasi.
+  const stats = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM files WHERE owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)${visFile}`).get(req.user.id, now());
   const trashCount = db.prepare('SELECT (SELECT COUNT(*) FROM files WHERE owner_id = ? AND deleted_at IS NOT NULL) + (SELECT COUNT(*) FROM folders WHERE owner_id = ? AND deleted_at IS NOT NULL) AS count').get(req.user.id, req.user.id).count;
-  return json(res, { folders, files, providers: providers.map(providerStatusForView), stats, folderId, path: folderPath(req.user.id, folderId), trashCount, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) });
+  // Berkas Owner yang dibagikan, muncul di "Semua file" (folderId null) member sebagai bagian
+  // terpisah supaya jelas bukan miliknya — dan tanpa aksi ubah/hapus.
+  let dariOwner = [];
+  if (!owner && !folderId) {
+    dariOwner = db.prepare(`SELECT f.id, f.name, f.mime_type, f.size, f.uploaded_at, f.cdn_enabled, f.cdn_slug, f.encrypted, f.expires_at, f.owner_id, u.username AS owner_nama
+      FROM files f JOIN users u ON u.id = f.owner_id
+      WHERE f.owner_id != ? AND f.shared = 1 AND f.deleted_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > ?) AND f.folder_id IS NULL ORDER BY f.uploaded_at DESC`).all(req.user.id, now());
+  }
+  return json(res, { folders, files, dariOwner, providers: providers.map(providerStatusForView), stats, folderId, path: folderPath(req.user.id, folderId), trashCount, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) });
 });
 app.post('/api/folders', requireUser, (req, res) => {
   const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
@@ -909,7 +930,8 @@ app.patch('/api/folders/:id', requireUser, (req, res) => {
   if (!folder) return json(res, { error: 'Folder tidak ditemukan.' }, 404);
   const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
   const hasParent = req.body.parentId !== undefined;
-  if (!name && !hasParent) return json(res, { error: 'Tidak ada perubahan. Kirim name (ganti nama) atau parentId (pindah).' }, 400);
+  const hasShared = req.body.shared !== undefined;
+  if (!name && !hasParent && !hasShared) return json(res, { error: 'Tidak ada perubahan. Kirim name (ganti nama), parentId (pindah), atau shared (izinkan member melihat).' }, 400);
   // Validasi dulu sebelum menyimpan: folder tidak boleh dipindahkan ke dalam dirinya
   // sendiri atau ke salah satu subfolder miliknya, karena relasi melingkar seperti itu
   // membuat folder menghilang dari daftar dan traversal rekursif berputar tanpa henti.
@@ -921,9 +943,17 @@ app.patch('/api/folders/:id', requireUser, (req, res) => {
     if (target.folderId && folderDescendantIds(req.user.id, folder.id).includes(target.folderId)) return json(res, { error: 'Folder tidak bisa dipindahkan ke dalam subfolder miliknya sendiri.' }, 400);
     parentId = target.folderId;
   }
+  if (hasShared && req.user.role === 'owner') {
+    const nilai = req.body.shared === true || req.body.shared === 'true' || req.body.shared === 1 ? 1 : 0;
+    if (nilai !== Number(folder.shared)) {
+      db.prepare('UPDATE folders SET shared = ? WHERE id = ?').run(nilai, folder.id);
+      audit(req.user.id, nilai ? 'share_folder' : 'unshare_folder', 'folder', folder.id);
+    }
+  }
   if (name) { db.prepare('UPDATE folders SET name = ? WHERE id = ?').run(name, folder.id); audit(req.user.id, 'rename', 'folder', folder.id); }
   if (hasParent && parentId !== folder.parent_id) { db.prepare('UPDATE folders SET parent_id = ? WHERE id = ?').run(parentId, folder.id); audit(req.user.id, 'move', 'folder', folder.id); }
-  return json(res, { ok: true, parentId });
+  const terbaru = db.prepare('SELECT shared FROM folders WHERE id = ?').get(folder.id);
+  return json(res, { ok: true, parentId, shared: Number(terbaru?.shared) === 1 });
 });
 app.delete('/api/folders/:id', requireUser, (req, res) => {
   const folder = db.prepare('SELECT id FROM folders WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
@@ -1051,14 +1081,24 @@ app.post('/api/files/cdn', requireUser, (req, res, next) => cdnUpload.single('fi
   }
   finally { fs.rmSync(file.path, { force: true }); }
 });
-app.get('/api/files/:id/download', requireUser, async (req, res) => { const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)').get(req.params.id, req.user.id, now()); const provider = file && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider); if (!file?.remote_file_id || !provider) return json(res, { error: 'File tidak ditemukan.' }, 404); try { return await sendRemoteFile(res, file, provider, 'inline', req.headers.range); } catch (error) { return json(res, { error: error.message }, 502); } });
+// Unduhan: milik sendiri selalu boleh; milik orang lain hanya kalau Owner menandainya `shared = 1`
+// (dan pemakainya bukan Owner). Owner sendiri tidak dibatasi di sini karena rute admin/files/:id
+// sudah melayaninya, tetapi membiarkannya lewat jalur ini juga aman.
+app.get('/api/files/:id/download', requireUser, async (req, res) => {
+  const file = db.prepare('SELECT * FROM files WHERE id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)').get(req.params.id, now());
+  const boleh = file && (file.owner_id === req.user.id || (Number(file.shared) === 1 && req.user.role !== 'owner'));
+  const provider = boleh && db.prepare('SELECT * FROM providers WHERE id = ?').get(file.provider);
+  if (!boleh || !file.remote_file_id || !provider) return json(res, { error: 'File tidak ditemukan.' }, 404);
+  try { return await sendRemoteFile(res, file, provider, 'inline', req.headers.range); } catch (error) { return json(res, { error: error.message }, 502); }
+});
 app.patch('/api/files/:id', requireUser, (req, res) => {
   const file = db.prepare('SELECT * FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);
   if (!file) return json(res, { error: 'File tidak ditemukan.' }, 404);
   const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
   const hasFolder = req.body.folderId !== undefined;
   const hasCdn = req.body.cdnEnabled !== undefined;
-  if (!name && !hasFolder && !hasCdn) return json(res, { error: 'Tidak ada perubahan. Kirim name (ganti nama), folderId (pindah), atau cdnEnabled (CDN).' }, 400);
+  const hasShared = req.body.shared !== undefined;
+  if (!name && !hasFolder && !hasCdn && !hasShared) return json(res, { error: 'Tidak ada perubahan. Kirim name (ganti nama), folderId (pindah), cdnEnabled (CDN), atau shared (izinkan member melihat).' }, 400);
   // Semua validasi dijalankan sebelum menyimpan supaya request yang gagal tidak
   // meninggalkan perubahan setengah jalan.
   let targetFolderId = file.folder_id;
@@ -1075,10 +1115,20 @@ app.patch('/api/files/:id', requireUser, (req, res) => {
     if (cdnEnabled && file.encrypted) return json(res, { error: 'File terenkripsi tidak bisa dipublikasikan ke CDN karena CDN melayani isi file apa adanya. Upload ulang tanpa enkripsi kalau mau dipakai di kode/website.' }, 409);
     if (cdnEnabled && !cdnSlugValue) cdnSlugValue = newCdnSlug();
   }
+  if (hasShared && req.user.role === 'owner') {
+    // Izin berbagi hanya milik Owner: berkas member tidak perlu izin siapa pun — ia sudah terlihat
+    // oleh Owner di layar "berkas user". Menyimpan di sini juga mencatat siapa yang mengubah izin.
+    const nilai = req.body.shared === true || req.body.shared === 'true' || req.body.shared === 1 ? 1 : 0;
+    if (nilai !== Number(file.shared)) {
+      db.prepare('UPDATE files SET shared = ? WHERE id = ?').run(nilai, file.id);
+      audit(req.user.id, nilai ? 'share_file' : 'unshare_file', 'file', file.id);
+    }
+  }
   if (name) { db.prepare('UPDATE files SET name = ? WHERE id = ?').run(safeName(name), file.id); audit(req.user.id, 'rename', 'file', file.id); }
   if (hasFolder && targetFolderId !== file.folder_id) { db.prepare('UPDATE files SET folder_id = ? WHERE id = ?').run(targetFolderId, file.id); audit(req.user.id, 'move', 'file', file.id); }
   if (hasCdn && cdnEnabled !== (file.cdn_enabled === 1)) { db.prepare('UPDATE files SET cdn_enabled = ?, cdn_slug = ? WHERE id = ?').run(cdnEnabled ? 1 : 0, cdnSlugValue, file.id); audit(req.user.id, cdnEnabled ? 'cdn_enable' : 'cdn_disable', 'file', file.id); }
-  return json(res, { ok: true, folderId: targetFolderId, cdnEnabled, cdnUrl: cdnEnabled && cdnSlugValue ? `/cdn/${cdnSlugValue}` : null });
+  const terbaru = db.prepare('SELECT shared FROM files WHERE id = ?').get(file.id);
+  return json(res, { ok: true, folderId: targetFolderId, cdnEnabled, shared: Number(terbaru?.shared) === 1, cdnUrl: cdnEnabled && cdnSlugValue ? `/cdn/${cdnSlugValue}` : null });
 });
 app.delete('/api/files/:id', requireUser, (req, res) => {
   const file = db.prepare('SELECT id FROM files WHERE id = ? AND owner_id = ? AND deleted_at IS NULL').get(req.params.id, req.user.id);

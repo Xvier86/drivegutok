@@ -123,6 +123,53 @@ try {
     assert.equal(res.status, 401, `status=${res.status}`);
   });
 
+  // Izin lihat Owner -> member: berkas Owner tersembunyi sampai `shared = 1`. Dua berkas berbeda
+  // disengaja supaya "tersembunyi" dan "dibagikan" diuji pada data yang sama-sama ada — bukan
+  // sekadar karena berkasnya tidak ada.
+  await cek('berkas Owner tersembunyi dari member sampai diizinkan', async () => {
+    const rahasia = await api('/api/dashboard', { headers: { cookie: cookieMember } });
+    const isi = await rahasia.json();
+    const terlihat = [...isi.files, ...(isi.dariOwner || [])].map((f) => f.id);
+    assert.ok(!terlihat.includes('png'), `berkas Owner bocor ke member: ${terlihat.join(',')}`);
+    assert.equal((isi.dariOwner || []).length, 0, `dariOwner harus kosong: ${JSON.stringify(isi.dariOwner)}`);
+    const unduh = await api('/api/files/png/download', { headers: { cookie: cookieMember } });
+    assert.equal(unduh.status, 404, `member bisa mengunduh berkas Owner: ${unduh.status}`);
+  });
+  await cek('Owner bisa mengizinkan member melihat berkasnya', async () => {
+    const izin = await api('/api/files/png', { method: 'PATCH', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify({ shared: true }) });
+    assert.equal(izin.status, 200, `status=${izin.status}`);
+    const data = await izin.json();
+    assert.equal(data.shared, true, `shared=${data.shared}`);
+  });
+  await cek('Setelah diizinkan, member melihat + bisa mengunduh berkas itu', async () => {
+    const isi = await (await api('/api/dashboard', { headers: { cookie: cookieMember } })).json();
+    const terlihat = (isi.dariOwner || []).map((f) => f.id);
+    assert.deepEqual(terlihat, ['png'], `dariOwner=${JSON.stringify(terlihat)}`);
+    const unduh = await api('/api/files/png/download', { headers: { cookie: cookieMember } });
+    assert.equal(unduh.status, 200, `status=${unduh.status}`);
+    assert.equal(await unduh.text(), isiFile.get('png'));
+  });
+  await cek('member tetap TIDAK bisa mengubah/menghapus berkas Owner', async () => {
+    for (const [metode, jalur] of [['PATCH', '/api/files/png'], ['DELETE', '/api/files/png'], ['PATCH', '/api/folders/d1']]) {
+      const res = await api(jalur, { method: metode, headers: { 'content-type': 'application/json', cookie: cookieMember }, body: metode === 'PATCH' ? JSON.stringify({ name: 'diretas' }) : undefined });
+      assert.equal(res.status, 404, `${metode} ${jalur} -> ${res.status}`);
+    }
+  });
+  await cek('mencabut izin langsung menyembunyikan berkas lagi', async () => {
+    await api('/api/files/png', { method: 'PATCH', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify({ shared: false }) });
+    const isi = await (await api('/api/dashboard', { headers: { cookie: cookieMember } })).json();
+    assert.equal((isi.dariOwner || []).length, 0, `masih terlihat: ${JSON.stringify(isi.dariOwner)}`);
+    const unduh = await api('/api/files/png/download', { headers: { cookie: cookieMember } });
+    assert.equal(unduh.status, 404, `masih bisa diunduh: ${unduh.status}`);
+  });
+  await cek('member tidak bisa memberi izin pada berkasnya sendiri (bukan wewenangnya)', async () => {
+    db.prepare('UPDATE files SET owner_id = ? WHERE id = ?').run(member.id, 'milik-member');
+    const res = await api('/api/files/milik-member', { method: 'PATCH', headers: { 'content-type': 'application/json', cookie: cookieMember }, body: JSON.stringify({ shared: true }) });
+    assert.equal(res.status, 200, `status=${res.status}`);
+    assert.equal(Number(db.prepare('SELECT shared FROM files WHERE id = ?').get('milik-member').shared), 0, 'member berhasil mengubah kolom shared');
+    db.prepare('UPDATE files SET owner_id = ? WHERE id = ?').run(owner.id, 'milik-member');
+  });
+
   await cek('SVG CDN memakai sandbox tanpa script/same-origin', async () => {
     const res = await api('/cdn/slug-svg');
     assert.equal(res.status, 200);
