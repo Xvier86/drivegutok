@@ -7,8 +7,20 @@
        dan itu dipakai padding .app-shell, FAB, serta toast supaya tidak ada kontrol yang
        tertutup sudut membulat layar. -->
   <meta name="theme-color" content="#100e08" />
-  <meta name="color-scheme" content="dark" />
+  <meta name="color-scheme" content="dark light" />
   <title>Gutok Drive | Cloud storage</title>
+  <!-- Mode gelap/terang diterapkan SEBELUM CSS dimuat. Tanpa skrip kecil ini, pengguna mode terang
+       melihat kedipan gelap di setiap muat halaman. Nilainya sama dengan kunci di js/tema.js;
+       localStorage bisa melempar (mode privat/kebijakan), jadi kegagalannya ditelan diam-diam. -->
+  <script>
+    try {
+      var p = localStorage.getItem('gutok-tema');
+      var t = p === 'terang' || p === 'gelap' ? p
+        : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'terang' : 'gelap');
+      document.documentElement.dataset.tema = t;
+      document.documentElement.style.colorScheme = t;
+    } catch (e) { document.documentElement.dataset.tema = 'gelap'; }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">

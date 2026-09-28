@@ -18,8 +18,8 @@
   cursor: pointer;
   transition: background var(--motion), border-color var(--motion), transform var(--motion);
 }
-.primary { background: var(--gold); border-color: var(--gold-bright); color: var(--ink); }
-.primary:hover { background: var(--gold-bright); }
+.primary { background: var(--gold); border-color: var(--gold-bright); color: var(--on-gold); }
+.primary:hover { background: var(--gold-hover); }
 .secondary { background: var(--panel-soft); border-color: var(--line); color: var(--paper); }
 .secondary:hover { border-color: var(--gold-dark); background: var(--panel); }
 .primary:active, .secondary:active { transform: translateY(1px); }
@@ -39,7 +39,7 @@
   transition: color var(--motion), border-color var(--motion), background var(--motion);
 }
 .icon-btn:hover { color: var(--gold-bright); border-color: var(--gold-dark); }
-.icon-btn.on { color: var(--ink); background: var(--gold); border-color: var(--gold-bright); }
+.icon-btn.on { color: var(--on-gold); background: var(--gold); border-color: var(--gold-bright); }
 .icon-btn.danger:hover { color: var(--danger); border-color: var(--danger); }
 
 .side-link {
@@ -125,9 +125,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
   color: var(--gold);
 }
 .folder-open { grid-column: 1 / 3; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-3); min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.file-card.folder .file-icon { background: rgba(231, 185, 63, 0.18); }
+.file-card.folder .file-icon { background: var(--gold-soft); }
 /* Berkas yang punya link CDN diberi warna berbeda supaya langsung terlihat mana yang publik. */
-.file-card.is-cdn .file-icon { background: rgba(231, 185, 63, 0.24); color: var(--gold-bright); }
+.file-card.is-cdn .file-icon { background: var(--gold-soft); color: var(--gold-bright); }
 .file-info { display: grid; gap: 1px; min-width: 0; }
 .file-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-meta { color: var(--muted); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -208,7 +208,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 
 /* Modal dan pratinjau */
 .modal { width: min(560px, calc(100% - 2rem)); max-height: min(90dvh, 60rem); margin: auto; overflow: auto; padding: var(--space-6); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); color: var(--paper); box-shadow: var(--shadow); }
-.modal::backdrop { background: rgba(10, 8, 6, 0.8); }
+.modal::backdrop { background: var(--scrim); }
 .modal[open] { animation: dialog-in 180ms ease-out both; }
 .modal h2 { margin-bottom: var(--space-5); font-size: var(--fs-title); overflow-wrap: anywhere; }
 .modal > .subtle { margin-bottom: var(--space-5); }
@@ -245,7 +245,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
-.loading-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(9, 8, 5, 0.78); }
+.loading-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: var(--scrim); }
 .loading-card { display: grid; justify-items: center; gap: var(--space-3); padding: var(--space-5) var(--space-6); border: 1px solid var(--gold-dark); border-radius: var(--radius-lg); background: var(--panel); color: var(--gold-bright); box-shadow: var(--shadow); }
 .loading-spinner { width: 34px; height: 34px; border: 3px solid var(--line); border-top-color: var(--gold-bright); border-radius: var(--radius-pill); animation: spin 0.9s linear infinite; }
 .loading-dots { color: var(--muted); font-size: var(--fs-sm); }
@@ -332,8 +332,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .dropzone strong { display: block; color: var(--paper); font-weight: 500; }
 .dropzone small { display: block; color: var(--muted); margin-top: var(--space-1); font-size: var(--fs-sm); }
 .dropzone:hover, .dropzone.drag { border-color: var(--gold); background: var(--gold-soft); }
-.fab { position: fixed; right: calc(var(--gutter) + env(safe-area-inset-right, 0px)); bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px)); z-index: 30; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-width: 56px; height: 52px; padding: 0 var(--space-5); border: 1px solid var(--gold-bright); border-radius: var(--radius); background: var(--gold); color: var(--ink); font: inherit; font-weight: 500; box-shadow: var(--shadow-soft); cursor: pointer; transition: background var(--motion), transform var(--motion); }
-.fab:hover { background: var(--gold-bright); transform: translateY(-2px); }
+.fab { position: fixed; right: calc(var(--gutter) + env(safe-area-inset-right, 0px)); bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px)); z-index: 30; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-width: 56px; height: 52px; padding: 0 var(--space-5); border: 1px solid var(--gold-bright); border-radius: var(--radius); background: var(--gold); color: var(--on-gold); font: inherit; font-weight: 500; box-shadow: var(--shadow-soft); cursor: pointer; transition: background var(--motion), transform var(--motion); }
+.fab:hover { background: var(--gold-hover); transform: translateY(-2px); }
 .fab:active { transform: translateY(1px); }
 @media (max-width: 767px) {
   .icon-btn { width: 44px; height: 44px; }

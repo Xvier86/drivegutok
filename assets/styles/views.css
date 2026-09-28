@@ -113,8 +113,53 @@
    tepi emas tipis supaya bedanya dari milik sendiri terlihat tanpa membaca meta. */
 .file-card.shared { border-color: var(--gold-dark); }
 .file-card.shared .file-meta { color: var(--gold-dark); }
-/* Tombol izin yang sedang aktif (sudah dibagikan) memakai nada emas yang sama dengan status "on". */
-.icon-btn.on { color: var(--gold); }
+/* Aturan .icon-btn.on sengaja TIDAK ditimpa di sini. Versi lama menimpanya dengan `color: var(--gold)`
+   sehingga ikon emas duduk di atas latar emas (.icon-btn.on memakai background --gold) — di mode
+   gelap ikonnya nyaris tak terlihat, dan di mode terang hilang sama sekali. */
+.icon-btn.on .ikon { fill: none; }
+
+/* Kartu pintasan penyimpanan di dashboard.
+
+   Satu bentuk untuk empat jenis, tiga keadaan: "Belum tersambung" (kartu redup, ikon samar), sudah
+   tersambung (garis tepi emas tipis + angka akun), dan kartu milik member (tanpa tombol). Kliknya
+   berbeda menurut keadaan — yang belum tersambung membuka form tambah, yang sudah membuka Kendali
+   workspace — karena itu ikon aksi di kanan hanya muncul untuk Owner dan tidak dijanjikan seragam.
+
+   Kartu ini TIDAK diwarnai berbeda per jenis provider (hijau untuk Drive, merah untuk Mega): tiga
+   aksen warna baru di layar yang sudah memakai emas sebagai satu-satunya warna aksi akan memecah
+   perhatian tanpa menambah makna. Yang membedakan jenis adalah ikon dan namanya. */
+.storage-pintasan { padding: var(--space-5); }
+.pintasan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr)); gap: var(--space-3); }
+.pintasan {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 80px;
+  padding: var(--space-4);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--pintasan);
+  color: var(--paper);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--motion), background var(--motion), transform var(--motion);
+}
+.pintasan:hover:not([disabled]) { background: var(--pintasan-hover); border-color: var(--gold-dark); transform: translateY(-1px); }
+.pintasan[disabled] { cursor: default; }
+/* Sudah tersambung: garis tepi emas menandai keadaan itu tanpa perlu membaca angkanya. */
+.pintasan.siap { border-color: var(--gold-dark); }
+.pintasan-ikon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--radius-sm); background: var(--gold-soft); color: var(--gold); }
+.pintasan-teks { display: grid; gap: 1px; min-width: 0; }
+.pintasan-teks strong { font-weight: 500; }
+.pintasan-teks small { color: var(--muted); font-size: var(--fs-xs); }
+.pintasan-catatan { line-height: var(--lh-meta); }
+.pintasan-aksi { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-pill); background: var(--gold); color: var(--on-gold); flex: none; }
+
+/* Tombol mode terang/gelap di header. Sama bentuknya dengan tombol ikon lain; yang membedakan hanya
+   ikonnya (matahari di mode gelap, bulan di mode terang) — jadi tidak perlu gaya baru. */
+.tema-toggle { flex: none; }
 
 /* Tombol hapus provider: nada bahaya hanya muncul saat disorot (aturan .ghost.danger), tapi warnanya
    dibiarkan redup sejak awal supaya tidak tampak seperti aksi utama di deretan tombol provider. */

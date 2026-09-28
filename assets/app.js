@@ -8,6 +8,7 @@ import { bindCdnUpload, bindDashboard, bindFileFolderActions, bindMediaPreview, 
 import { renderAdmin } from './js/views/admin.js';
 import { renderBerkasUser } from './js/views/berkas-user.js';
 import { renderTrash } from './js/views/trash.js';
+import { pasangTema } from './js/tema.js';
 
 rute.dashboard = renderDashboard;
 rute.admin = renderAdmin;
@@ -39,7 +40,7 @@ document.addEventListener('click', async (event) => {
 
 // Dipanggil sekali per render (bukan tiap perubahan DOM). bindAkun() mengembalikan lebih awal kalau
 // layar aktif bukan Pengaturan akun, jadi urutan pemanggilan tidak perlu dijaga.
-const pasangUlang = () => { bindDashboard(); bindMediaPreview(); bindFileFolderActions(); bindCdnUpload(); bindProviderPicker(); bindUploadOptions(); bindAkun(); pasangDrawer(); applyRoleVisibility(); animateView(); };
+const pasangUlang = () => { bindDashboard(); bindMediaPreview(); bindFileFolderActions(); bindCdnUpload(); bindProviderPicker(); bindUploadOptions(); bindAkun(); pasangDrawer(); pasangTema(); applyRoleVisibility(); animateView(); };
 document.addEventListener('layar-siap', pasangUlang);
 
 start();

@@ -1,5 +1,17 @@
 /* Token desain: satu sumber untuk warna, jarak, radius, tipografi, dan gerak.
-   Palet diambil dari logo Gutok: dasar cokelat tua hangat dengan aksen emas. */
+   Palet diambil dari logo Gutok: dasar cokelat tua hangat dengan aksen emas.
+
+   DUA MODE. Mode gelap adalah nilai di :root (mode asli, identitas logo). Mode terang ditulis di
+   `[data-tema="terang"]` sebagai penimpaan, jadi tidak ada aturan komponen yang perlu tahu soal tema:
+   atribut di <html> mengganti nilainya, sisanya ikut sendiri. Atributnya dipasang sebelum CSS dimuat
+   (lihat index.html), sehingga tidak ada kedipan gelap saat pengguna mode terang membuka halaman.
+
+   Setiap warna dipakai lewat PERAN, bukan lewat nama warna. Dua peran khusus yang dulu tidak ada:
+   `--on-gold` (teks di atas permukaan emas: tombol utama, fab, ikon aktif) dan `--gold-hover`
+   (permukaan emas saat hover). Di mode terang, emas harus gelap supaya terbaca di atas kertas, jadi
+   teks di atasnya menjadi terang — sedangkan `--gold-bright` justru jadi warna TEKS. Memakai --ink
+   sebagai "teks di atas emas" seperti dulu membuat tombol utama tak terbaca di mode terang
+   (terukur 3,21:1 — di bawah ambang 4,5:1). */
 :root {
   color-scheme: dark;
 
@@ -18,10 +30,18 @@
   --gold-bright: #f3cf83;
   --gold-dark: #8c7039;
   --gold-soft: rgba(225, 183, 91, 0.1);
+  /* Permukaan emas saat hover dan teks di atasnya. Dipisah dari --gold-bright karena token itu
+     dipakai sebagai warna TEKS di 15 tempat; kalau ia juga jadi permukaan, mode terang tidak bisa
+     memberi teks yang kontras di atasnya. Terukur: 9,97:1 (gelap) / 5,44:1 (terang). */
+  --gold-hover: #f3cf83;
+  --on-gold: #14110e;
   --danger: #f0917d;
   /* Merah redup: dot status "belum siap / kuota error". Lebih gelap dari --danger supaya baris yang
      butuh perhatian tidak berteriak seperti tombol hapus. */
   --danger-dim: rgba(226, 104, 79, 0.55);
+  /* Latar gelap di belakang modal, drawer, dan overlay pemuatan. Dulu ditulis langsung sebagai
+     rgba() di tiga aturan, jadi mode terang tidak punya cara menggantinya. */
+  --scrim: rgba(10, 8, 6, 0.8);
 
   /* Lingkaran penyimpanan: satu nada menyala (busur terpakai), satu nada mati (jalur kosong), dan
      hairline --line untuk garis pemisahnya. Widget ini sengaja tidak memakai box-shadow —
@@ -96,4 +116,55 @@
   /* Rail lebih ringkas supaya daftar file mendapat ruang. */
   --sidebar: clamp(13.5rem, 17vw, 15.5rem);
   --content: 1360px;
+  /* Nada lembut kartu pintasan provider di dashboard: satu pasangan untuk keadaan "belum tersambung"
+     (redup) dan satu untuk "siap". Dipakai lewat peran supaya mode terang bisa menggantinya. */
+  --pintasan: var(--panel-soft);
+  --pintasan-hover: var(--panel);
+}
+
+/* MODE TERANG.
+   Bukan pembalikan naif dari mode gelap — tiga hal sengaja berbeda:
+   1. Kanvas lebih GELAP dari kartu (`--ink` < `--panel`), kebalikan mode gelap, karena di atas kertas
+      kartu naik dengan menjadi lebih terang. Kalau dibalik apa adanya, kartu tenggelam ke latar.
+   2. Bayangan jauh lebih tipis dan lebih hangat. Bayangan gelap pekat di atas kertas terbaca kotor.
+   3. Warna sinyal (emas, bahaya) diterangkan/digelapkan agar kontrasnya cukup di atas kertas, bukan
+      disalin apa adanya. Semua pasangan di bawah sudah dihitung: `uji/kontras-palet.py`.
+   Rasio terukur (utama): teks di kartu 16,36:1 · teks redup di kartu 6,25:1 · emas sebagai teks
+   7,46:1 · teks di atas tombol emas 5,44:1 · bahaya 7,35:1 — semua di atas ambang WCAG AA. */
+[data-tema='terang'] {
+  color-scheme: light;
+
+  --ink: #f7f2e8;
+  --ink-soft: #efe8da;
+  --panel: #fffdf7;
+  --panel-soft: #f4ede0;
+  --line: #d9ccb7;
+  --line-soft: #e8dfcf;
+
+  --paper: #241d15;
+  --muted: #6b5d4e;
+  --muted-strong: #4a3f34;
+
+  /* Emas pindah peran: sebagai latar ia harus gelap (5,44:1 dengan teks terang), dan sebagai teks
+     justru jadi cokelat-emas gelap (7,46:1 di atas kartu). */
+  --gold: #8a6106;
+  --gold-bright: #6f4e05;
+  --gold-dark: #b8912f;
+  --gold-soft: rgba(138, 97, 6, 0.1);
+  --gold-hover: #7a5505;
+  --on-gold: #fffdf7;
+  --danger: #a51f16;
+  --danger-dim: rgba(165, 31, 22, 0.45);
+  --scrim: rgba(40, 32, 22, 0.42);
+
+  --amber-glow: #8a6106;
+  --amber-unlit: #e3d8c4;
+
+  --shadow: 0 14px 34px rgba(74, 58, 38, 0.16);
+  --shadow-soft: 0 6px 18px rgba(74, 58, 38, 0.12);
+  --shadow-tight: 0 2px 5px rgba(74, 58, 38, 0.14);
+  --ring-focus: 0 0 0 2px var(--ink), 0 0 0 4px var(--gold);
+
+  --pintasan: var(--panel-soft);
+  --pintasan-hover: #efe6d5;
 }

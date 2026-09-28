@@ -16,7 +16,7 @@ button, a, input, select, textarea { touch-action: manipulation; }
 button:disabled { cursor: not-allowed; opacity: 0.55; }
 code { font-family: var(--f-mono); font-size: var(--fs-sm); overflow-wrap: anywhere; }
 :focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 3px; border-radius: var(--radius-sm); }
-::selection { background: var(--gold); color: var(--ink); }
+::selection { background: var(--gold); color: var(--on-gold); }
 
 .app-shell {
   position: relative;
@@ -88,7 +88,7 @@ body.is-drawer { overflow: hidden; }
   .sidebar { position: absolute; inset-block: 0; left: 0; width: min(86%, 20rem); z-index: 45; overflow-y: auto; transform: translateX(-102%); visibility: hidden; transition: transform var(--motion), visibility var(--motion); }
   body.is-drawer .sidebar { transform: none; visibility: visible; }
   .drawer-toggle { display: inline-flex; }
-  .drawer-scrim { display: block; position: absolute; inset: 0; z-index: 44; background: rgba(12, 10, 8, 0.76); opacity: 0; pointer-events: none; transition: opacity var(--motion); }
+  .drawer-scrim { display: block; position: absolute; inset: 0; z-index: 44; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity var(--motion); }
   body.is-drawer .drawer-scrim { opacity: 1; pointer-events: auto; }
   .main { padding-inline: var(--space-4); gap: var(--space-4); }
   .topbar { gap: var(--space-2); min-height: 76px; }
