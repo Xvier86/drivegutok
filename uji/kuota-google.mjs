@@ -52,6 +52,9 @@ const port = reserve.address().port;
 await new Promise(r => reserve.close(r));
 
 fs.copyFileSync(path.join(root, 'server.js'), path.join(kerja, 'server.js'));
+// Modul yang diimpor server.js ikut disalin: tanpa ini server tiruan gagal start
+// (ERR_MODULE_NOT_FOUND) dan seluruh ujinya merah karena sebab yang salah.
+fs.copyFileSync(path.join(root, 'halaman-publik.js'), path.join(kerja, 'halaman-publik.js'));
 fs.copyFileSync(path.join(root, 'package.json'), path.join(kerja, 'package.json'));
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(kerja, 'node_modules'));
 const child = spawn(process.execPath, ['server.js'], {

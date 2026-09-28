@@ -11,6 +11,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { halamanKetentuan, halamanPrivasi } from './halaman-publik.js';
 
 // Selamatkan proses dari promise yang reject tanpa catch. Contoh nyata: megajs membuat promise
 // internal yang reject saat akun Mega diblokir (`Error: EBLOCKED (-16): User blocked`). Node 20
@@ -1511,5 +1512,9 @@ app.get('/api/admin/google/tambah', requireUser, ownerOnly, (req, res) => {
   audit(req.user.id, 'create', 'provider', provider.id);
   return res.redirect(`/api/admin/providers/${provider.id}/google/login`);
 });
+// Halaman publik untuk syarat publikasi Google: home page, kebijakan privasi, dan ketentuan layanan.
+// Didaftarkan SEBELUM catch-all SPA di bawah, kalau tidak ketiganya ikut dilayani index.html.
+app.get('/privacy', (_req, res) => res.type('html').send(halamanPrivasi()));
+app.get('/terms', (_req, res) => res.type('html').send(halamanKetentuan()));
 app.get('/*splat', (req, res) => { if (req.path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404); return res.sendFile(path.join(root, 'assets', 'index.html')); });
 app.listen(port, () => console.log(`MyDrive berjalan di http://127.0.0.1:${port}`));

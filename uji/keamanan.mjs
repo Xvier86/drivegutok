@@ -13,7 +13,9 @@ import crypto from 'node:crypto';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const kerja = fs.mkdtempSync(path.join(os.tmpdir(), 'uji-keamanan-'));
-for (const berkas of ['server.js', 'package.json']) fs.copyFileSync(path.join(root, berkas), path.join(kerja, berkas));
+// Modul yang diimpor server.js WAJIB ikut disalin: tanpa `halaman-publik.js` server tiruan gagal
+// start (ERR_MODULE_NOT_FOUND) dan seluruh uji keamanan merah karena sebab yang salah.
+for (const berkas of ['server.js', 'halaman-publik.js', 'package.json']) fs.copyFileSync(path.join(root, berkas), path.join(kerja, berkas));
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(kerja, 'node_modules'));
 fs.mkdirSync(path.join(kerja, 'assets'));
 const payload = '<svg xmlns="http://www.w3.org/2000/svg"><script>parent.document.querySelector("#hasil").textContent="XSS";</script></svg>';

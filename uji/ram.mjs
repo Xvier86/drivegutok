@@ -64,6 +64,8 @@ cek('kegagalan kuota provider tidak dicoba ulang tiap menit', /CAPACITY_ERROR_TT
 // bisa mengisi disk VPS hanya dengan pesan yang sama.
 const kerjaLog = fs.mkdtempSync(path.join(os.tmpdir(), 'uji-log-'));
 fs.copyFileSync(path.join(root, 'server.js'), path.join(kerjaLog, 'server.js'));
+// Modul yang diimpor server.js ikut disalin, kalau tidak server tiruan gagal start.
+fs.copyFileSync(path.join(root, 'halaman-publik.js'), path.join(kerjaLog, 'halaman-publik.js'));
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(kerjaLog, 'node_modules'));
 fs.writeFileSync(path.join(kerjaLog, 'picu.mjs'), [
   "await import('./server.js');",
@@ -117,6 +119,9 @@ const dasarTiruan = `http://127.0.0.1:${tiruan.address().port}`;
 // --- Salinan repo untuk dijalankan. ---
 const berkasServer = process.env.UJI_SERVER_JS || path.join(root, 'server.js');
 fs.copyFileSync(berkasServer, path.join(kerja, 'server.js'));
+// Modul yang diimpor server.js ikut disalin: tanpa ini server tiruan gagal start
+// (ERR_MODULE_NOT_FOUND) dan seluruh uji merah karena sebab yang salah.
+fs.copyFileSync(path.join(root, 'halaman-publik.js'), path.join(kerja, 'halaman-publik.js'));
 fs.copyFileSync(path.join(root, 'package.json'), path.join(kerja, 'package.json'));
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(kerja, 'node_modules'));
 

@@ -65,6 +65,8 @@ await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
 const port = reserve.address().port;
 await new Promise(resolve => reserve.close(resolve));
 fs.copyFileSync(process.env.UJI_SERVER_JS || path.join(root, 'server.js'), path.join(kerja, 'server.js'));
+// Modul yang diimpor server.js ikut disalin supaya server tiruan bisa start.
+fs.copyFileSync(path.join(root, 'halaman-publik.js'), path.join(kerja, 'halaman-publik.js'));
 fs.copyFileSync(path.join(root, 'package.json'), path.join(kerja, 'package.json'));
 fs.symlinkSync(path.join(root, 'node_modules'), path.join(kerja, 'node_modules'));
 const child = spawn(process.execPath, ['server.js'], {
