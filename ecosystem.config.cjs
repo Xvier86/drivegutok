@@ -39,6 +39,11 @@ module.exports = {
       // menyusun redirect URI login akun Google: di balik reverse proxy permintaan sampai ke Node
       // sebagai http://, dan Google menolak redirect URI yang tidak sama dengan yang didaftarkan.
       PUBLIC_BASE_URL: '',
+      // Kredensial aplikasi OAuth Google. Diisi dari .env oleh update-code.sh, sama seperti
+      // STORAGE_CONFIG_KEY: PM2 memakai env dari berkas INI, bukan dari .env, jadi tanpa dua baris
+      // ini tombol "Tambah Google Drive" satu-klik tidak akan menemukan kredensialnya.
+      GOOGLE_OAUTH_CLIENT_ID: '',
+      GOOGLE_OAUTH_CLIENT_SECRET: '',
     },
   }],
 };

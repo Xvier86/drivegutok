@@ -38,8 +38,15 @@ fi
 # http:// padahal situs publiknya https:// — Google menolak URI yang tidak sama dengan yang
 # didaftarkan.
 PUBLIK=""
+OAUTH_ID=""
+OAUTH_SECRET=""
 if [ -f .env ]; then
   PUBLIK=$(grep '^PUBLIC_BASE_URL=' .env | head -1 | cut -d '=' -f2- || true)
+  # Kredensial aplikasi OAuth Google: dipakai tombol "Tambah Google Drive" satu-klik. Nilainya
+  # rahasia dan hanya hidup di .env, sedangkan berkas yang dibaca PM2 dilacak Git — jadi harus
+  # disuntik ulang setiap kali kode ditarik, persis seperti STORAGE_CONFIG_KEY.
+  OAUTH_ID=$(grep '^GOOGLE_OAUTH_CLIENT_ID=' .env | head -1 | cut -d '=' -f2- || true)
+  OAUTH_SECRET=$(grep '^GOOGLE_OAUTH_CLIENT_SECRET=' .env | head -1 | cut -d '=' -f2- || true)
 fi
 
 suntik_secret() {
@@ -48,6 +55,13 @@ suntik_secret() {
   fi
   if [ -n "$PUBLIK" ] && [ -f ecosystem.config.cjs ]; then
     sed -i "s#PUBLIC_BASE_URL: '.*'#PUBLIC_BASE_URL: '${PUBLIK}'#" ecosystem.config.cjs
+  fi
+  # `#` sebagai pemisah: Client ID/secret Google tidak pernah memuat `#`, sedangkan `/` bisa ada.
+  if [ -n "$OAUTH_ID" ] && [ -f ecosystem.config.cjs ]; then
+    sed -i "s#GOOGLE_OAUTH_CLIENT_ID: '.*'#GOOGLE_OAUTH_CLIENT_ID: '${OAUTH_ID}'#" ecosystem.config.cjs
+  fi
+  if [ -n "$OAUTH_SECRET" ] && [ -f ecosystem.config.cjs ]; then
+    sed -i "s#GOOGLE_OAUTH_CLIENT_SECRET: '.*'#GOOGLE_OAUTH_CLIENT_SECRET: '${OAUTH_SECRET}'#" ecosystem.config.cjs
   fi
 }
 
