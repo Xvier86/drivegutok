@@ -10,45 +10,12 @@ const ringkasanTab = (tab, data) => {
   return `${files.length + (tab === 'file' ? data.folders.length : 0)} item · ${formatBytes(files.reduce((total, file) => total + Number(file.size || 0), 0))}`;
 };
 
-// Kartu pintasan penyimpanan di dashboard.
-//
-// Dulu menambah storage hanya bisa dari Kendali workspace — jalan yang tidak ditemukan pemilik baru,
-// dan itulah yang membuat permintaan "tambahkan Google Drive / Mega / Telegram di dashboard" masuk
-// akal: tempat menambah storage seharusnya ada di layar yang paling sering dibuka. Empat jenis
-// ditampilkan sekaligus dengan keadaan yang sebenarnya (berapa akun sudah tersambung, berapa aktif),
-// jadi angkanya bukan hiasan: satuannya provider yang benar-benar terdaftar di server.
-//
-// Tiga alur berbeda disatukan: Google Drive tersambung oleh server dalam satu klik (tanpa isi apa
-// pun), sedangkan Mega dan Telegram butuh email/password dan bot token. Kartu tetap satu bentuk,
-// tetapi keterangannya jujur menyebut apa yang akan diminta.
-const jenisStorage = (data, kind) => data.providers.filter((provider) => provider.kind === kind);
-const papanStorage = (data, owner) => {
-  const kartu = [
-    { kind: 'gdrive', nama: 'Google Drive', ikon: 'cloud', catatan: 'Sambung sekali klik — folder kerja dibuat otomatis.' },
-    { kind: 'mega', nama: 'Mega', ikon: 'hard-drive', catatan: 'Butuh email dan password akun Mega.' },
-    { kind: 'telegram', nama: 'Telegram', ikon: 'send', catatan: 'Butuh token bot dan ID channel/owner.' },
-  ].map(({ kind, nama, ikon, catatan }) => {
-    const punya = jenisStorage(data, kind);
-    const aktif = punya.filter((provider) => provider.enabled).length;
-    const jumlah = punya.length ? `${punya.length} akun · ${aktif} aktif` : 'Belum tersambung';
-    // Kartu yang sudah tersambung diklik menuju Kendali workspace (tempat kelola/aktifkan); yang
-    // belum tersambung langsung membuka alur penambahannya. Tanpa pemisahan ini, kartu "1 akun · 1
-    // aktif" yang diklik ke form tambah hanya membingungkan.
-    const label = punya.length ? `Kelola ${nama}` : `Tambah ${nama}`;
-    return `<button type="button" class="pintasan${punya.length ? ' siap' : ''}" ${owner ? `data-tambah="${punya.length ? 'kelola' : kind}"` : 'disabled'} aria-label="${esc(label)}">
-        <span class="pintasan-ikon">${icon(ikon, 20)}</span>
-        <span class="pintasan-teks"><strong>${esc(nama)}</strong><small>${esc(jumlah)}</small><small class="pintasan-catatan">${esc(catatan)}</small></span>
-        <span class="pintasan-aksi">${owner ? icon('plus', 16) : ''}</span>
-      </button>`;
-  }).join('');
-  // Tanpa peran owner, kartu tetap tampil sebagai informasi penyimpanan (tanpa tombol) — angka
-  // "berapa akun" berguna bagi member, sedangkan menambah storage memang bukan haknya.
-  return `<section class="panel storage-pintasan"><div class="panel-heading"><h2>Tambah penyimpanan</h2><span class="eyebrow">${owner ? 'Pemasangan cepat' : 'Dikelola Owner'}</span></div><div class="pintasan-grid">${kartu}</div></section>`;
-};
-
 let storageDimainkan = false; // animasi masuk lingkaran hanya sekali per page-load, bukan tiap render ulang
 
 export async function renderDashboard() { const data = await api(`/api/dashboard?${state.folderId ? `folderId=${state.folderId}` : ''}`); state.dashboard = data; state.folderId = data.folderId || null;
+  // Hak Owner dihitung sekali di sini: dipakai oleh kartu pintasan (hanya Owner boleh menambah) dan
+  // tidak boleh dibaca dari state di dalam string markup.
+  const owner = state.user?.role === 'owner';
   // Total penyimpanan dihitung otomatis dari akumulasi akun provider yang ditambahkan, kecuali
   // Telegram: kuota Telegram diisi manual Owner (Bot API tidak punya endpoint kuota), jadi angka itu
   // bukan ruang nyata dan menggeser "tersedia" kalau ikut dijumlahkan. Provider yang kapasitasnya
@@ -75,6 +42,57 @@ export async function renderDashboard() { const data = await api(`/api/dashboard
   const catatanKuota = [...new Set(providerTertambah.map((provider) => provider.capacityNote).filter(Boolean))];
   const barisCatatan = catatanKuota.length ? `<p class="subtle storage-note">${catatanKuota.map(esc).join(' ')}</p>` : '';
   const lingkaran = `<div class="storage-ring" id="storage-ring" role="img" aria-label="Terpakai ${formatBytes(totalTerpakai)} dari ${teksTotal}${totalKapasitas ? ` (${labelPersen})` : ''}"><svg class="storage-ring-svg" viewBox="0 0 42 42" aria-hidden="true"><circle class="ring-jalur" cx="21" cy="21" r="18"></circle><circle class="ring-isi" cx="21" cy="21" r="18" pathLength="100" stroke-dasharray="${busurLingkaran}"></circle></svg><span class="storage-pct" id="storage-pct">${labelPersen}</span></div>`;
+  // Meter per provider di layar utama.
+  //
+  // Dulu rincian per provider hanya ada di Kendali workspace, sehingga angka "1,2 GB dari 10 TB" di
+  // sidebar tidak bisa dijelaskan dari layar itu sendiri: dari mana 10 TB datang, dan provider mana
+  // yang terpakai. Sekarang tiap provider punya satu baris dengan meter yang bisa dianimasikan —
+  // panjangnya ditulis sebagai `width` (bukan memakai elemen <meter>), karena nilai <meter> tidak bisa
+  // dianimasikan dari nol dan justru tampil kosong saat animasinya dilewati.
+  const barisMeter = (provider) => {
+    const kapasitas = Number(provider.capacity_bytes || 0);
+    const terpakai = Number(provider.used_bytes || 0);
+    const persen = kapasitas ? Math.min(100, terpakai / kapasitas * 100) : (terpakai > 0 ? 100 : 0);
+    const lebar = Math.round(persen * 10) / 10;
+    const keterangan = kapasitas ? `${formatBytes(terpakai)} dari ${formatBytes(kapasitas)}` : provider.kind === 'telegram' ? `${formatBytes(terpakai)} terkirim` : `${formatBytes(terpakai)} · kuota tak dilaporkan`;
+    const catatan = provider.capacityNote || provider.capacityError || '';
+    return `<li class="sp-baris"><div class="sp-kepala"><span class="sp-nama">${esc(provider.name)}</span><span class="sp-angka" data-bytes="${terpakai}">${keterangan}</span></div><div class="sp-jalur" role="img" aria-label="${esc(`${provider.name}: ${keterangan}${kapasitas ? ` (${Math.round(persen)}%)` : ''}`)}"><span class="sp-isi" data-lebar="${lebar}"></span></div>${catatan ? `<p class="sp-catatan">${esc(catatan)}</p>` : ''}</li>`;
+  };
+  // Satu panel: judul, angka besar, meter per provider, lalu baris "apa yang belum tersambung" supaya
+  // panel ini berguna walau belum ada provider sama sekali.
+  const papanRingkasan = (data) => `<section class="panel storage-utama" id="storage-card">
+      <div class="storage-head"><span class="storage-label">Penyimpanan</span><span class="storage-badge">${providerTertambah.length} akun dihitung · ${data.providers.length} tersambung</span></div>
+      <div class="su-atas"><p class="storage-readout"><span class="storage-isi" id="storage-isi" data-bytes="${totalTerpakai}">${formatBytes(totalTerpakai)}</span><span class="storage-dari">dari <span class="storage-total" id="storage-total">${teksTotal}</span></span></p>${lingkaran}</div>
+      ${data.providers.length ? `<ul class="sp-daftar">${data.providers.map(barisMeter).join('')}</ul>` : ''}
+      ${barisCatatan}
+    </section>`;
+  // Kartu pintasan penyimpanan: SATU tempat, dan tempatnya di dashboard.
+  //
+  // Sebelumnya kartu ini HANYA muncul di Kendali workspace — satu-satunya jalan menambah penyimpanan
+  // tersembunyi di halaman yang jarang dibuka, persis keluhan pemilik ("tambah penyimpanan ini hanya
+  // muncul di kendali workspace"). Sekarang ada di layar utama, sedangkan halaman Kendali workspace
+  // menyimpan daftar provider lengkapnya (konfigurasi, aktif/nonaktif, hapus).
+  const jenisStorage = (data, kind) => data.providers.filter((provider) => provider.kind === kind);
+  const kartuPintasan = (data, owner) => [
+    { kind: 'gdrive', nama: 'Google Drive', ikon: 'cloud', catatan: 'Sambung sekali klik — folder kerja dibuat otomatis.' },
+    { kind: 'mega', nama: 'Mega', ikon: 'hard-drive', catatan: 'Butuh email dan password akun Mega.' },
+    { kind: 'telegram', nama: 'Telegram', ikon: 'send', catatan: 'Butuh token bot dan ID channel/owner.' },
+  ].map(({ kind, nama, ikon, catatan }) => {
+    const punya = jenisStorage(data, kind);
+    const aktif = punya.filter((provider) => provider.enabled).length;
+    const jumlah = punya.length ? `${punya.length} akun · ${aktif} aktif` : 'Belum tersambung';
+    // Kartu yang sudah tersambung diklik menuju Kendali workspace (tempat mengelola/aktifkan); yang
+    // belum tersambung langsung membuka alur penambahannya.
+    const label = punya.length ? `Kelola ${nama}` : `Tambah ${nama}`;
+    return `<button type="button" class="pintasan${punya.length ? ' siap' : ''}" ${owner ? `data-tambah="${punya.length ? 'kelola' : kind}"` : 'disabled'} aria-label="${esc(label)}">
+        <span class="pintasan-ikon">${icon(ikon, 20)}</span>
+        <span class="pintasan-teks"><strong>${esc(nama)}</strong><small>${esc(jumlah)}</small><small class="pintasan-catatan">${esc(catatan)}</small></span>
+        <span class="pintasan-aksi">${owner ? icon('plus', 16) : ''}</span>
+      </button>`;
+  }).join('');
+  // Tanpa peran owner, kartu tetap tampil sebagai informasi penyimpanan (tanpa tombol) — angka "berapa
+  // akun" berguna bagi member, sedangkan menambah storage memang bukan haknya.
+  const panelPintasan = `<section class="panel storage-pintasan"><div class="panel-heading"><h2>Tambah penyimpanan</h2><span class="eyebrow">${owner ? 'Pemasangan cepat' : 'Dikelola Owner'}</span></div><div class="pintasan-grid">${kartuPintasan(data, owner)}</div></section>`;
   // Pemisahan berkas biasa dan berkas CDN memakai kolom yang sudah ada: `cdn_enabled` menandai berkas
   // yang punya link publik /cdn/<slug>. Satu permintaan dashboard saja, lalu tab hanya menyembunyikan
   // baris lewat CSS (atribut data-tab di panel), jadi pindah tab tidak memanggil server.
@@ -114,12 +132,12 @@ export async function renderDashboard() { const data = await api(`/api/dashboard
   // dalamnya ikut menggulir, jadi tombol Unggah akan hilang dari sudut layar begitu halaman digulir.
   // Di luar shell, `fixed` tetap menempel di viewport.
 
-  app.innerHTML = `<div class="app-shell"><aside class="sidebar"><div class="brand"><img src="/logo.jpg" alt="" class="brand-logo" width="26" height="26">Gutok<span>Drive</span></div><div><p class="workspace-label">Workspace</p><nav class="nav" aria-label="Workspace"><button class="active" aria-current="page" data-folder="">${icon('layout-grid')} Semua file</button><button id="new-folder">${icon('folder-plus')} Folder baru</button><button id="trash-view">${icon('trash-2')} Sampah${data.trashCount ? ` (${data.trashCount})` : ''}</button>${state.user.role === 'owner' ? `<button id="admin-view">${icon('settings-2')} Kendali workspace</button>` : ''}</nav></div><div class="sidebar-bottom"><section class="panel storage-card" id="storage-card"><div class="storage-head"><span class="storage-label">Penyimpanan</span></div><p class="storage-readout"><span class="storage-isi" id="storage-isi" data-bytes="${totalTerpakai}">${formatBytes(totalTerpakai)}</span><span class="storage-dari">dari <span class="storage-total">${teksTotal}</span></span></p>${lingkaran}${barisCatatan}</section><button class="side-link btn-block mt-md" id="logout">${icon('log-out')} Keluar</button></div></aside><main class="main"><header class="topbar"><nav class="breadcrumb" aria-label="Lokasi folder">${crumb}</nav><div class="topbar-kanan" id="topbar-kanan">${chipAkun()}</div></header><div class="view-head"><div><h1 class="view-title" tabindex="-1">${state.folderId ? esc(data.path?.at(-1)?.name || 'Folder') : 'Penyimpanan'}</h1><p class="subtle">${data.folders.length} folder · ${berkasBiasa.length} file · ${berkasCdn.length} berkas CDN</p></div></div><div class="action-row file-toolbar"><div class="tabs" role="tablist" aria-label="Jenis file">${tombolTab('file', 'File', berkasBiasa.length)}${tombolTab('cdn', 'CDN', berkasCdn.length)}</div><button type="button" class="secondary" id="upload-folder-trigger">${icon('folder')} Upload folder</button><button type="button" class="secondary" id="folder-trigger">${icon('folder-plus')} Folder baru</button><input id="file-input" type="file" multiple hidden></div>${papanStorage(data, state.user?.role === 'owner')}<button type="button" class="dropzone" id="dropzone">${icon('upload-cloud',28)}<span><strong>Tarik file/folder ke sini, atau pilih dari perangkat</strong><small>Tentukan masa simpan sebelum upload.</small></span>${icon('arrow-up-right',20)}</button><section class="panel files-panel" id="files-panel" data-tab="${tab}" role="tabpanel" aria-labelledby="tab-${tab}" tabindex="0"><div class="panel-heading"><h2 id="files-heading">${tab === 'cdn' ? 'Berkas CDN' : 'Isi folder'}</h2><span class="eyebrow" id="files-summary">${ringkasanTab(tab, data)}</span></div><div class="grid file-list">${data.folders.map(barisFolder).join('')}${data.files.map(barisFile).join('')}${kosong}${bagianDibagikan}</div></section></main></div><button class="fab" id="upload-trigger" title="Upload file" aria-label="Upload file">${icon('upload-cloud',22)}<span>Upload file</span></button>`; }
+  app.innerHTML = `<div class="app-shell"><aside class="sidebar"><div class="brand"><img src="/logo.jpg" alt="" class="brand-logo" width="26" height="26">Gutok<span>Drive</span></div><div><p class="workspace-label">Workspace</p><nav class="nav" aria-label="Workspace"><button class="active" aria-current="page" data-folder="">${icon('layout-grid')} Semua file</button><button id="new-folder">${icon('folder-plus')} Folder baru</button><button id="trash-view">${icon('trash-2')} Sampah${data.trashCount ? ` (${data.trashCount})` : ''}</button>${state.user.role === 'owner' ? `<button id="admin-view">${icon('settings-2')} Kendali workspace</button>` : ''}</nav></div><div class="sidebar-bottom"><button class="side-link btn-block" id="logout">${icon('log-out')} Keluar</button></div></aside><main class="main"><header class="topbar"><nav class="breadcrumb" aria-label="Lokasi folder">${crumb}</nav><div class="topbar-kanan" id="topbar-kanan">${chipAkun()}</div></header><div class="view-head"><div><h1 class="view-title" tabindex="-1">${state.folderId ? esc(data.path?.at(-1)?.name || 'Folder') : 'Penyimpanan'}</h1><p class="subtle">${data.folders.length} folder · ${berkasBiasa.length} file · ${berkasCdn.length} berkas CDN</p></div></div><div class="papan-storage">${papanRingkasan(data)}${panelPintasan}</div><div class="action-row file-toolbar"><div class="tabs" role="tablist" aria-label="Jenis file">${tombolTab('file', 'File', berkasBiasa.length)}${tombolTab('cdn', 'CDN', berkasCdn.length)}</div><button type="button" class="secondary" id="upload-folder-trigger">${icon('folder')} Upload folder</button><button type="button" class="secondary" id="folder-trigger">${icon('folder-plus')} Folder baru</button><input id="file-input" type="file" multiple hidden></div><button type="button" class="dropzone" id="dropzone">${icon('upload-cloud',28)}<span><strong>Tarik file/folder ke sini, atau pilih dari perangkat</strong><small>Tentukan masa simpan sebelum upload.</small></span>${icon('arrow-up-right',20)}</button><section class="panel files-panel" id="files-panel" data-tab="${tab}" role="tabpanel" aria-labelledby="tab-${tab}" tabindex="0"><div class="panel-heading"><h2 id="files-heading">${tab === 'cdn' ? 'Berkas CDN' : 'Isi folder'}</h2><span class="eyebrow" id="files-summary">${ringkasanTab(tab, data)}</span></div><div class="grid file-list">${data.folders.map(barisFolder).join('')}${data.files.map(barisFile).join('')}${kosong}${bagianDibagikan}</div></section></main></div><button class="fab" id="upload-trigger" title="Upload file" aria-label="Upload file">${icon('upload-cloud',22)}<span>Upload file</span></button>`; }
 // Ikatan tombol dipasang satu kali saja: app.js memanggil bindDashboard() setelah setiap render
 // (peristiwa 'layar-siap' -> pasangUlang). Dulu fungsi di atas juga memanggilnya sendiri, jadi
 // #admin-view/#admin-card/#trash-view punya dua listener — satu klik = dua kali /api/admin/overview
 // (terlihat di browser tiruan jsdom: endpoint itu terpanggil dua kali).
-export function bindDashboard() { if (!document.querySelector('#upload-trigger')) return; const bukaFolder = async (folderId) => {
+export function bindDashboard() { if (!document.querySelector('#upload-trigger')) return; animateStorage(); bindStorageMeters(); const bukaFolder = async (folderId) => {
     state.folderId = folderId || null;
     try { await ke('dashboard'); document.querySelector('.view-title')?.focus(); }
     catch (error) { notify(error.message); }
@@ -196,6 +214,28 @@ function animateStorage() {
   window.requestAnimationFrame?.(hitungNaik);
 }
 
+// Meter per provider menumbuhkan dirinya saat layar utama dibuka.
+//
+// Ditulis lewat `style.width` (satu-satunya inline style yang diizinkan, bersama lebar bilah unggah:
+// uji gaya menolak inline style STATIS, sedangkan yang berasal dari data justru harus begitu). Diatur
+// dari JS, bukan CSS, karena nilainya bergantung angka dari server dan harus tetap benar kalau animasi
+// dilewati: lebar final dipasang seketika, lalu hanya transisinya yang bergerak.
+export function bindStorageMeters() {
+  const jalur = document.querySelectorAll('.sp-isi');
+  if (!jalur.length) return;
+  const kurangiGerak = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  jalur.forEach((isi, urutan) => {
+    const lebar = Number(isi.dataset.lebar || 0);
+    if (kurangiGerak) { isi.style.width = `${lebar}%`; return; }
+    window.requestAnimationFrame?.(() => {
+      // Jeda bertingkat: baris provider bergerak berurutan, bukan serentak, sehingga mata bisa
+      // mengikuti satu per satu. Batas 240 ms supaya daftar panjang tidak terasa lambat.
+      isi.style.transitionDelay = `${Math.min(urutan * 70, 240)}ms`;
+      isi.style.width = `${lebar}%`;
+    });
+  });
+}
+
 export function bindMediaPreview() { document.querySelectorAll('.file-card:not(.folder)').forEach((card) => { card.onclick = (clickEvent) => { if (clickEvent.target.closest('.card-actions')) return; const file = (state.dashboard?.files || []).find((item) => item.id === card.dataset.fileId); if (!file) return; const url = file.cdn_enabled && file.cdn_slug ? `/cdn/${file.cdn_slug}` : `/api/files/${file.id}/download`; const type = file.mime_type.toLowerCase(); const isImage = type.startsWith('image/'); const isVideo = type.startsWith('video/'); const isAudio = type.startsWith('audio/'); const isPdf = /^application\/pdf(;|$)/.test(type); const isText = /^text\/plain(;|$)/.test(type); /* Pemutar yang dipasang untuk berkas yang tidak didukung codec/container (mkv, avi, opus) hanya tampil mati tanpa pesan. canPlayType() menjawab sebelum pemutar dipasang. */ const putar = (mime) => document.createElement('video').canPlayType(mime) !== ''; const takDidukung = `<div class="media-empty">Browser ini tidak bisa memutar format <b>${esc(type)}</b> langsung. Pakai tombol download, atau ubah ke MP4 (video) / MP3 (audio).</div>`; const media = isImage ? `<img class="media-preview" src="${url}" alt="${esc(file.name)}">` : isVideo && putar(type) ? `<video class="media-preview" src="${url}" controls preload="metadata"></video>` : isAudio && putar(type) ? `<audio class="media-audio" src="${url}" controls></audio>` : isVideo || isAudio ? takDidukung : isPdf || isText ? `<iframe class="media-frame" src="${url}" title="${esc(file.name)}"></iframe>` : `<div class="media-empty">Format ini tidak bisa dirender langsung oleh browser. Gunakan tombol download untuk membukanya.</div>`; document.body.insertAdjacentHTML('beforeend', `<dialog class="modal" id="media-modal"><h2>${esc(file.name)}</h2>${media}<div class="preview-actions"><a class="primary" href="${url}" target="_blank" rel="noopener">${icon('external-link')} Buka / download</a><button class="secondary" id="close-media">Tutup</button></div></dialog>`); openDialog('media-modal'); document.querySelector('#close-media').onclick = () => closeDialog('media-modal'); }; }); }
 export function renameFile(fileId, currentName) { openRenameModal('file', fileId, currentName); }
 function openRenameModal(kind, id, currentName) {
@@ -224,7 +264,7 @@ function openRenameModal(kind, id, currentName) {
 const tungguAnimasi = (baris, batasMs = 400) => new Promise((lanjut) => { const timer = setTimeout(lanjut, batasMs); baris.addEventListener('animationend', () => { clearTimeout(timer); lanjut(); }, { once: true }); });
 // Urutan yang penting: animasi → DELETE → hilangkan baris. Kalau API gagal, kelas `removing`
 // dicabut sehingga baris kembali terlihat (dan bisa diklik lagi), bukan dibiarkan setengah hilang.
-export async function deleteFile(fileId, name) { if (!confirm(`Pindahkan "${name}" ke Sampah? Kamu masih bisa memulihkannya dari menu Sampah.`)) return; const baris = document.querySelector(`.file-card[data-file-id="${fileId}"]`); if (baris) { baris.classList.add('removing'); await tungguAnimasi(baris); } try { await api(`/api/files/${fileId}`, { method:'DELETE' }); notify('Dipindahkan ke Sampah. Buka menu Sampah untuk memulihkannya.'); await ke('dashboard'); } catch (error) { baris?.classList.remove('removing'); notify(error.message); } }
+export async function deleteFile(fileId, name) { if (!confirm(`Pindahkan "${name}" ke Sampah? Kamu masih bisa memulihkannya dari menu Sampah.`)) return; const baris = document.querySelector(`.file-card[data-file-id="${fileId}"]`); if (baris) { baris.classList.add('removing'); await tungguAnimasi(baris); } try { await api(`/api/files/${fileId}`, { method:'DELETE' }); notify('Dipindahkan ke Sampah. Buka menu Sampah untuk memulihkannya.'); await ke('dashboard'); await segarkanPenyimpanan(); } catch (error) { baris?.classList.remove('removing'); notify(error.message); } }
 export function renameFolder(folderId, currentName) { openRenameModal('folder', folderId, currentName); }
 export async function deleteFolder(folderId, name) { if (!confirm(`Pindahkan folder "${name}" beserta seluruh isinya ke Sampah? Isinya masih bisa dipulihkan dari menu Sampah.`)) return; try { await api(`/api/folders/${folderId}`, { method:'DELETE' }); notify('Folder dipindahkan ke Sampah. Buka menu Sampah untuk memulihkannya.'); await ke('dashboard'); } catch (error) { notify(error.message); } }
 export function bindFileFolderActions() { document.querySelectorAll('.file-view').forEach((button) => button.onclick = (event) => { event.stopPropagation(); button.closest('.file-card')?.click(); }); document.querySelectorAll('.file-rename').forEach((button) => button.onclick = (event) => { event.stopPropagation(); renameFile(button.dataset.fileId, button.dataset.fileName); }); document.querySelectorAll('.file-share').forEach((button) => button.onclick = (event) => { event.stopPropagation(); shareFile(button.dataset.fileId, button.dataset.fileName, button.dataset.cdn); }); document.querySelectorAll('.file-delete').forEach((button) => button.onclick = (event) => { event.stopPropagation(); deleteFile(button.dataset.fileId, button.dataset.fileName || 'ini'); }); document.querySelectorAll('.file-share-access, .folder-share-access').forEach((button) => button.onclick = (event) => { event.stopPropagation(); ubahIzin(button); }); document.querySelectorAll('.folder-rename').forEach((button) => button.onclick = (event) => { event.stopPropagation(); renameFolder(button.dataset.folderId, button.dataset.folderName); }); document.querySelectorAll('.folder-delete').forEach((button) => button.onclick = (event) => { event.stopPropagation(); deleteFolder(button.dataset.folderId, button.dataset.folderName || 'ini'); }); document.querySelectorAll('.file-move').forEach((button) => button.onclick = (event) => { event.stopPropagation(); moveFile(button.dataset.fileId, button.dataset.fileName || 'file ini'); }); document.querySelectorAll('.folder-move').forEach((button) => button.onclick = (event) => { event.stopPropagation(); moveFolder(button.dataset.folderId, button.dataset.folderName || 'folder ini'); }); document.querySelectorAll('.file-cdn').forEach((button) => button.onclick = (event) => { event.stopPropagation(); openCdnModal(button.dataset.fileId, button.dataset.fileName || 'file ini', button.dataset.cdnEnabled === '1', button.dataset.cdnSlug || ''); }); }
@@ -383,9 +423,12 @@ export async function uploadFiles(files, retentionType = 'forever', retentionVal
     catch (error) { baris?.remove(); failure = error.message; notify(`${relativePath}: ${error.message}`); }
   }
   // Badge "Selesai" tampil ~1,8 detik, lalu render ulang menggantinya dengan baris file biasa —
-  // sekaligus memperbarui angka penyimpanan di sidebar.
+  // sekaligus memperbarui angka penyimpanan di panel Penyimpanan.
   if (adaBaris) await new Promise((lanjut) => setTimeout(lanjut, 1800));
   await ke('dashboard');
+  // Angka penyimpanan disegarkan tanpa menunggu pemilik pindah layar: byte sebuah berkas sering baru
+  // diketahui provider setelah unggahannya selesai, jadi nilai di /api/dashboard berubah tepat di sini.
+  await segarkanPenyimpanan();
   if (failure) notify(`${completed} dari ${entries.length} file berhasil. Hasil berhasil tetap disimpan; sisanya gagal/tidak diunggah. ${failure}`);
 }
 export async function uploadCdnFiles(files, retentionType = 'forever', retentionValue = '') { showLoading('Upload CDN sedang berjalan...'); try { const providerId = document.querySelector('#upload-provider')?.value || ''; for (const file of files) { if (file.size > 5 * 1024 * 1024) { notify(`${file.name} melebihi batas 5 MB.`); continue; } try { const body = new FormData(); body.append('file', file); if (providerId) body.append('providerId', providerId); if (state.folderId) body.append('folderId', state.folderId); body.append('retentionType', retentionType); if (retentionValue) body.append('retentionValue', retentionValue); const result = await api('/api/files/cdn', { method:'POST', body }); notify(`CDN siap: ${result.cdnUrl}`); } catch (error) { notify(error.message); } } await ke('dashboard'); } finally { hideLoading(); } }
@@ -439,4 +482,52 @@ export async function toggleCdn(fileId, enabled) {
     else notify(enabled ? 'CDN diaktifkan.' : 'CDN dimatikan. Link lamanya sudah tidak bisa diakses.');
     await ke('dashboard');
   } catch (error) { notify(error.message); }
+}
+
+// Segarkan angka penyimpanan SETELAH daftar berkas berubah.
+//
+// Tanpa ini angka "1,2 GB dari 10 TB" dan meter per provider tetap nilai saat halaman dimuat: pemilik
+// mengunggah berkas, angka lama tetap tertulis, dan satu-satunya cara melihat angka baru adalah pindah
+// layar. /api/dashboard dipanggil ulang dengan tenang (daftar berkas tidak digambar ulang, hanya angka,
+// busur, dan meter yang diubah) supaya tidak ada kedipan dan tidak ada gulungan yang melompat.
+async function segarkanPenyimpanan() {
+  const isi = document.querySelector('#storage-isi');
+  if (!isi) return;
+  try {
+    const data = await api(`/api/dashboard${state.folderId ? `?folderId=${state.folderId}` : ''}`);
+    state.dashboard = data;
+    const providerTertambah = data.providers.filter((provider) => provider.kind !== 'telegram');
+    const terpakai = providerTertambah.reduce((total, provider) => total + Number(provider.used_bytes || 0), 0);
+    const kapasitas = providerTertambah.reduce((total, provider) => total + Number(provider.capacity_bytes || 0), 0);
+    const berubah = Number(isi.dataset.bytes || 0) !== terpakai;
+    isi.textContent = formatBytes(terpakai);
+    isi.dataset.bytes = terpakai;
+    // Angka yang benar-benar berubah ditandai singkat supaya pergantiannya terlihat, bukan cuma
+    // terbaca ulang oleh yang kebetulan memperhatikan.
+    if (berubah) {
+      isi.classList.remove('berubah');
+      void isi.offsetWidth; // paksa animasi dimulai ulang walau kelasnya baru saja dilepas
+      isi.classList.add('berubah');
+      setTimeout(() => isi.classList.remove('berubah'), 1300);
+    }
+    const total = document.querySelector('#storage-total');
+    if (total) total.textContent = kapasitas ? formatBytes(kapasitas) : 'tidak dilaporkan';
+    const persen = kapasitas ? Math.min(100, terpakai / kapasitas * 100) : 0;
+    const busur = document.querySelector('.ring-isi');
+    if (busur) busur.setAttribute('stroke-dasharray', `${kapasitas ? Math.round(persen * 10) / 10 : 0} 100`);
+    const label = document.querySelector('#storage-pct');
+    if (label) label.textContent = kapasitas ? (persen < 1 && terpakai > 0 ? '<1%' : `${Math.round(persen)}%`) : '—';
+    // Meter per provider: dibangun ulang dari data baru, lalu lebarnya dipasang tanpa animasi masuk
+    // (barisnya sudah ada, jadi tidak perlu tumbuh lagi dari nol).
+    const daftar = document.querySelector('.sp-daftar');
+    if (daftar) {
+      daftar.innerHTML = providerTertambah.map((provider) => {
+        const kap = Number(provider.capacity_bytes || 0);
+        const pakai = Number(provider.used_bytes || 0);
+        const lebar = kap ? Math.round(Math.min(100, pakai / kap * 100) * 10) / 10 : (pakai > 0 ? 100 : 0);
+        const keterangan = kap ? `${formatBytes(pakai)} dari ${formatBytes(kap)}` : provider.kind === 'telegram' ? `${formatBytes(pakai)} terkirim` : `${formatBytes(pakai)} · kuota tak dilaporkan`;
+        return `<li class="sp-baris"><div class="sp-kepala"><span class="sp-nama">${esc(provider.name)}</span><span class="sp-angka">${keterangan}</span></div><div class="sp-jalur" role="img" aria-label="${esc(`${provider.name}: ${keterangan}`)}"><span class="sp-isi" style="width:${lebar}%"></span></div></li>`;
+      }).join('');
+    }
+  } catch { /* angka lama tetap tampil; kegagalan di sini tidak boleh mengganggu aksi utamanya */ }
 }

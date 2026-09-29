@@ -342,3 +342,43 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
   .modal { padding: var(--space-5); }
   .encrypt-option { align-items: flex-start; }
 }
+
+/* Panel penyimpanan di layar utama: angka besar, busur persen, dan satu meter per provider.
+
+   Dulu widget ini hanya satu lingkaran tanpa rincian, ditempel di sidebar selebar 15rem. Angka
+   "dari 10 TB" tidak bisa dijelaskan dari situ — asalnya dari mana, provider mana yang terpakai.
+   Sekarang panelnya di layar utama (dua kolom di layar lebar: angka + busur di kiri, daftar provider
+   di kanan) dan tiap provider punya meternya sendiri. */
+.storage-utama { display: grid; gap: var(--space-4); }
+.storage-badge { color: var(--muted); font-size: var(--fs-xs); }
+.su-atas { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-5); }
+.storage-utama .storage-readout { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.storage-utama .storage-isi { font-family: var(--f-mono); font-size: var(--fs-xl); color: var(--paper); }
+.sp-daftar { display: grid; gap: var(--space-4); list-style: none; margin: 0; padding: 0; flex: 1 1 18rem; min-width: 0; }
+.sp-baris { display: grid; gap: var(--space-2); min-width: 0; }
+.sp-kepala { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); min-width: 0; }
+.sp-nama { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-angka { font-family: var(--f-mono); color: var(--muted); font-size: var(--fs-xs); }
+/* Jalur meter selalu terlihat penuh (--amber-unlit); isinya tumbuh dari nol saat layar dibuka.
+   Transisi 700ms hanya berlaku untuk perubahan lebar — termasuk saat /api/dashboard disegarkan
+   setelah unggah, sehingga angka baru "bergerak" alih-alih melompat. */
+.sp-jalur { position: relative; height: 6px; border-radius: var(--radius-pill); background: var(--amber-unlit); overflow: hidden; }
+.sp-isi { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--amber-glow); transition: width 700ms var(--ease); }
+.sp-catatan { margin: 0; color: var(--muted); font-size: var(--fs-xs); line-height: var(--lh-meta); }
+
+/* Angka yang berubah diberi penanda singkat supaya pergantiannya terlihat, bukan cuma terbaca ulang. */
+@keyframes angka-berubah { from { color: var(--gold-bright); } }
+.storage-isi.berubah, .sp-angka.berubah { animation: angka-berubah 1200ms var(--ease) both; }
+
+/* Daftar di Kendali workspace masuk berurutan, jadi halaman yang panjang tidak muncul serentak —
+   mata dipandu dari baris pertama ke bawah. Hanya dipasang kalau JS hidup; tanpa JS daftarnya tetap
+   tampil penuh tanpa gerak (markup sudah final). */
+@keyframes baris-masuk { from { opacity: 0; transform: translateY(6px); } }
+.animasi-daftar > * { animation: baris-masuk 260ms var(--ease) both; }
+.animasi-daftar > *:nth-child(1) { animation-delay: 0ms; }
+.animasi-daftar > *:nth-child(2) { animation-delay: 40ms; }
+.animasi-daftar > *:nth-child(3) { animation-delay: 80ms; }
+.animasi-daftar > *:nth-child(4) { animation-delay: 120ms; }
+.animasi-daftar > *:nth-child(5) { animation-delay: 160ms; }
+.animasi-daftar > *:nth-child(n + 6) { animation-delay: 200ms; }
+.tambah-cepat-baris { margin-bottom: var(--space-3); }

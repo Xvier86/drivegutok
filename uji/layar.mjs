@@ -60,7 +60,7 @@ Object.assign(rute, { dashboard: files.renderDashboard, admin: admin.renderAdmin
 // Widget penyimpanan sengaja TIDAK merinci per provider: daftar di bawah memeriksa lingkaran
 // akumulasi (SVG), bukan meter per provider.
 const WAJIB = {
-  renderDashboard: ['storage-card', 'storage-head', 'storage-label', 'Penyimpanan', 'storage-isi', 'data-bytes', 'storage-dari', 'storage-total', 'storage-pct', 'storage-ring', 'ring-jalur', 'ring-isi', 'pathLength="100"', 'storage-note', 'Google tidak melaporkan kuota untuk akun ini.', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn', 'class="fab"', 'upload-trigger'],
+  renderDashboard: ['storage-card', 'storage-head', 'storage-label', 'Penyimpanan', 'storage-isi', 'data-bytes', 'storage-dari', 'storage-total', 'storage-pct', 'storage-ring', 'ring-jalur', 'ring-isi', 'pathLength="100"', 'storage-note', 'Google tidak melaporkan kuota untuk akun ini.', 'file-list', 'tabs', 'is-cdn', 'data-tab="file"', 'tab-file', 'tab-cdn', 'class="fab"', 'upload-trigger', 'storage-utama', 'storage-badge', 'sp-daftar', 'sp-baris', 'sp-jalur', 'sp-isi', 'data-lebar', 'pintasan', 'pintasan-grid', 'storage-pintasan', 'papan-storage', 'kelola'],
   renderAdmin: ['provider-list', 'member-list', 'member-row', 'member-access', 'data-member', 'badge', 'ghost', 'timeline', 'tl-hari', 'tl-item', 'tl-titik', 'tl-jam', 'terkirim ke Telegram', 'data-auth="service"'],
   // Pengaturan akun: dua formulir, masing-masing dengan kolom password saat ini (tanpa itu halaman ini
   // hanya jadi teater — servernya sendiri yang menjaga, lihat uji/akun.mjs).
@@ -71,6 +71,7 @@ const WAJIB = {
 };
 // Jejak markup lama yang harus hilang: nama/status provider per baris dan bilah individualnya.
 const JEJAK_PROVIDER = ['storage-item', 'storage-row', 'storage-list', 'storage-bar', 'storage-seg', 'class="progress', 'provider-mini', 'provider-label'];
+
 
 let gagal = 0;
 const tangkapan = {};
@@ -110,7 +111,8 @@ const jumlahGhost = (adminMarkup.match(/class="ghost /g) || []).length;
 // Dua tombol per provider + dua per member non-owner (Lihat berkas + Cabut/Pulihkan), ditambah satu
 // "Lihat berkas" untuk Owner, dan satu "Hapus" per provider. Owner juga bisa berisi berkas, jadi
 // barisnya pun perlu jalan masuk.
-const jumlahGhostHarus = jumlahProvider * 3 + jumlahMemberBiasa * 2 + 1;
+// + 3 tombol tambah cepat (Google Drive/Mega/Telegram) di baris Kendali workspace.
+const jumlahGhostHarus = jumlahProvider * 3 + jumlahMemberBiasa * 2 + 1 + 3;
 if (jumlahGhost === jumlahGhostHarus && !/class="secondary (provider|member)/.test(adminMarkup)) console.log(`  ok  aksi provider/member seragam satu gaya .ghost (${jumlahGhost})`);
 else { console.error(`  GAGAL  aksi Owner control masih campur gaya tombol (ghost: ${jumlahGhost}, harus ${jumlahGhostHarus})`); gagal += 1; }
 // Telegram tidak melaporkan kuota: badge-nya menyebut byte yang terkirim, dan provider sehat tidak
@@ -127,9 +129,15 @@ if (!/class="tl-jam">[^<]*\d{4}/.test(adminMarkup)) console.log('  ok  baris akt
 else { console.error('  GAGAL  baris aktivitas masih memuat tanggal lengkap'); gagal += 1; }
 // Widget penyimpanan hanya boleh menampilkan meter: tidak ada jejak nama, status, atau bilah per
 // provider. Kalau salah satu kelas lama kembali muncul, rincian per provider diam-diam hidup lagi.
-const sisaProvider = JEJAK_PROVIDER.filter((jejak) => tangkapan.renderDashboard.includes(jejak));
-if (sisaProvider.length) { console.error(`  GAGAL  dashboard masih merender rincian per provider: ${sisaProvider.join(', ')}`); gagal += 1; }
-else console.log('  ok  dashboard tanpa rincian per provider');
+// Rincian per provider kini DISENGAJA ada di dashboard (permintaan pemilik: angka "dari 10 TB" harus
+// bisa dijelaskan dari layar itu sendiri). Yang dijaga: meternya benar-benar dirender, satu baris per
+// provider non-Telegram, dan angka agregat tetap mengabaikan Telegram.
+const jumlahMeter = (tangkapan.renderDashboard.match(/class="sp-isi"/g) || []).length;
+const jumlahProviderSemua = jawaban['/api/dashboard'].providers.length;
+if (JEJAK_PROVIDER.some((jejak) => jejak === 'provider-mini' && tangkapan.renderDashboard.includes(jejak))) { console.error('  GAGAL  dashboard memakai penanda penyimpanan lama (provider-mini)'); gagal += 1; }
+else if (jumlahMeter !== jumlahProviderSemua) { console.error(`  GAGAL  meter provider di dashboard ${jumlahMeter}, harus ${jumlahProviderSemua}`); gagal += 1; }
+else if (!/data-lebar="/.test(tangkapan.renderDashboard)) { console.error('  GAGAL  meter provider tidak membawa nilai lebar (animasi tidak akan bergerak)'); gagal += 1; }
+else console.log(`  ok  dashboard merinci ${jumlahMeter} provider tersambung dengan meter beranimasi`);
 // Lingkaran penyimpanan: busur digambar lewat stroke-dasharray persen (pathLength="100"), dan
 // akumulasi kapasitas wajib mengabaikan Telegram — kuotanya diisi manual Owner (Bot API tidak punya
 // endpoint kuota), jadi kalau ikut dijumlahkan angka "tersedia" melompat ke ruang yang bukan milik
@@ -137,8 +145,19 @@ else console.log('  ok  dashboard tanpa rincian per provider');
 // kalau Telegram ikut terhitung, busurnya 0,4% dan kapasitas totalnya "1.0 MB".
 const busur = tangkapan.renderDashboard.match(/class="ring-isi"[^>]*stroke-dasharray="([^"]+)"/)?.[1];
 const dipakaiTeks = tangkapan.renderDashboard.match(/id="storage-isi" data-bytes="(\d+)"/)?.[1];
-if (busur === '50 100' && dipakaiTeks === '1024' && !tangkapan.renderDashboard.includes('1.0 MB')) console.log('  ok  lingkaran penyimpanan 50% dari akumulasi provider non-Telegram');
-else { console.error(`  GAGAL  lingkaran penyimpanan busur=${busur} terpakai=${dipakaiTeks} kuota-Telegram-ikut-terhitung=${tangkapan.renderDashboard.includes('1.0 MB')}`); gagal += 1; }
+const totalTeks = tangkapan.renderDashboard.match(/id="storage-total">([^<]+)</)?.[1] || '';
+const telegramIkutDihitung = totalTeks.includes('MB');
+if (busur === '50 100' && dipakaiTeks === '1024' && !telegramIkutDihitung) console.log('  ok  lingkaran penyimpanan 50% dari akumulasi provider non-Telegram');
+else { console.error(`  GAGAL  lingkaran penyimpanan busur=${busur} terpakai=${dipakaiTeks} total=${totalTeks}`); gagal += 1; }
+// Baris Telegram tetap tampil sebagai rincian walau byte-nya TIDAK ikut dijumlahkan ke total. Data
+// uji memberi Telegram kapasitas manual 1 MB, jadi keterangannya "x dari 1.0 MB"; kalau kapasitasnya 0
+// (tidak diisi Owner), keterangannya berubah menjadi "x terkirim".
+// Diperiksa untuk SEMUA provider, bukan satu nama yang ditulis di uji: nama provider bisa berubah dan
+// uji yang menyebut satu nama saja akan merah karena sebab yang salah.
+const namaTerdaftar = jawaban['/api/dashboard'].providers.map((p) => p.name);
+const kurang = namaTerdaftar.filter((nama) => !tangkapan.renderDashboard.includes(`sp-nama">${nama}`));
+if (!kurang.length) console.log(`  ok  tiap provider (${namaTerdaftar.length}) punya barisnya sendiri di rincian penyimpanan`);
+else { console.error(`  GAGAL  provider tanpa baris rincian: ${kurang.join(', ')}`); gagal += 1; }
 // Tombol Unggah pindah dari toolbar ke tombol mengapung: satu aksi utama yang selalu terjangkau,
 // dan toolbar cukup menyisakan Folder baru + Upload CDN (yang disisipkan bindCdnUpload saat runtime).
 const dasbor = tangkapan.renderDashboard;

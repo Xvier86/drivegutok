@@ -164,3 +164,15 @@
 /* Tombol hapus provider: nada bahaya hanya muncul saat disorot (aturan .ghost.danger), tapi warnanya
    dibiarkan redup sejak awal supaya tidak tampak seperti aksi utama di deretan tombol provider. */
 .provider-hapus { color: var(--danger-dim); }
+
+/* Papan penyimpanan di layar utama: ringkasan + kartu pintasan berdampingan di layar lebar.
+   Dua kolom supaya kartu "Tambah penyimpanan" tidak mendorong daftar berkas terlalu jauh ke bawah
+   pada layar besar, tapi tetap menumpuk rapi di layar sempit. */
+.papan-storage { display: grid; gap: var(--space-5); grid-template-columns: minmax(0, 1fr); }
+@container shell (min-width: 1025px) {
+  .papan-storage { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: start; }
+}
+/* Tombol tambah cepat di Kendali workspace: ikut gaya .ghost supaya seragam dengan aksi provider
+   lain, hanya dirapatkan karena berdiri sendiri di barisnya. */
+.tambah-cepat { min-height: 36px; padding: 4px 10px; border-color: var(--line-soft); }
+.tambah-cepat:hover { border-color: var(--gold-dark); }

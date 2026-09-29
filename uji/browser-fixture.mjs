@@ -46,7 +46,9 @@ const probe = http.createServer().listen(0, '127.0.0.1');
 await once(probe, 'listening');
 const port = probe.address().port;
 await new Promise(resolve => probe.close(resolve));
-for (const file of ['server.js', 'package.json']) fs.copyFileSync(path.join(root, file), path.join(kerja, file));
+// Modul yang diimpor server.js ikut disalin: tanpa ini server fixture gagal start
+// (ERR_MODULE_NOT_FOUND) dan fixture menggantung tanpa pesan.
+for (const file of ['server.js', 'halaman-publik.js', 'package.json']) fs.copyFileSync(path.join(root, file), path.join(kerja, file));
 for (const dir of ['node_modules', 'assets']) fs.symlinkSync(path.join(root, dir), path.join(kerja, dir));
 const log = fs.openSync(path.join(kerja, 'server.log'), 'a');
 const server = spawn(process.execPath, ['server.js'], {
